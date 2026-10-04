@@ -76,6 +76,7 @@ src/main/java/com/albertominetti/orderbook
 │   └── EngineConfiguration       Spring wiring of the Clock
 ├── web/
 │   ├── OrderController           REST endpoints
+│   ├── HomeController            landing page at /, links to the documentation
 │   └── GlobalExceptionHandler    maps exceptions to HTTP responses
 ├── dto/                          request/response records
 │   ├── CreateOrderRequest        order payload, symbol included
@@ -166,6 +167,10 @@ springdoc-openapi is included, so an interactive API reference is generated at r
 
 - Swagger UI: <http://localhost:8080/swagger-ui.html>
 - OpenAPI JSON: <http://localhost:8080/v3/api-docs>
+
+The root path <http://localhost:8080/> serves a small landing page (`HomeController`) that describes
+the service and links to Swagger UI and to the raw OpenAPI JSON, so opening the application in a
+browser is enough to find the documentation.
 
 ## REST API
 
@@ -401,7 +406,7 @@ The old single book endpoints (`GET /api/orderbook`, `GET /api/trades`) are gone
 mvn test
 ```
 
-The suite has three layers:
+The suite is organized in three layers plus the landing page test:
 
 - `MatchingEngineTest`: the matching core on a frozen clock. Resting orders, full match, partial fills,
   price-time priority (best price first, FIFO inside a level), market orders sweeping several levels
@@ -415,6 +420,8 @@ The suite has three layers:
 - `OrderApiIntegrationTest`: end-to-end MockMvc tests of every endpoint, including the `201` plus
   `Location` contract, symbol normalization, `GET`/`DELETE` on an order of any instrument, the per
   instrument book and trade tape, instrument listing, the full error matrix and instrument isolation.
+- `HomePageTest`: the landing page at `/` answers `200` with an HTML body linking to Swagger UI and
+  to the OpenAPI JSON.
 
 ## License
 

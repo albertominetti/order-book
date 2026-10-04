@@ -1,0 +1,104 @@
+package com.albertominetti.orderbook.web;
+
+import org.springframework.http.MediaType;
+import org.springframework.stereotype.Controller;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.ResponseBody;
+
+/**
+ * Landing page of the application, served at the root path {@code /}.
+ *
+ * <p>The page is a single self-contained HTML string, styled inline and without any external asset,
+ * so it opens in any browser and immediately points to the generated API documentation
+ * (Swagger UI and the raw OpenAPI JSON).</p>
+ */
+@Controller
+public class HomeController {
+
+    /**
+     * Renders the landing page: a short description of the service and the links to the
+     * documentation.
+     *
+     * @return the page as {@code text/html}, written straight to the response body
+     */
+    @GetMapping(value = "/", produces = MediaType.TEXT_HTML_VALUE)
+    @ResponseBody
+    public String home() {
+        return """
+                <!DOCTYPE html>
+                <html lang="en">
+                <head>
+                  <meta charset="utf-8">
+                  <meta name="viewport" content="width=device-width, initial-scale=1">
+                  <title>Order Book API</title>
+                  <style>
+                    :root {
+                      color-scheme: light dark;
+                    }
+                    body {
+                      margin: 0;
+                      min-height: 100vh;
+                      display: flex;
+                      align-items: center;
+                      justify-content: center;
+                      font-family: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+                      line-height: 1.5;
+                      background: #f6f7f9;
+                      color: #1b1f24;
+                    }
+                    main {
+                      max-width: 34rem;
+                      margin: 2rem;
+                      padding: 2rem;
+                      background: #ffffff;
+                      border: 1px solid #e3e6ea;
+                      border-radius: 0.75rem;
+                    }
+                    h1 {
+                      margin: 0 0 0.5rem;
+                      font-size: 1.6rem;
+                    }
+                    p {
+                      margin: 0 0 1.5rem;
+                      color: #4a5159;
+                    }
+                    ul {
+                      margin: 0;
+                      padding-left: 1.25rem;
+                    }
+                    li {
+                      margin-bottom: 0.5rem;
+                    }
+                    a {
+                      color: #1a5fb4;
+                    }
+                    footer {
+                      margin-top: 1.5rem;
+                      font-size: 0.8rem;
+                      color: #6b7280;
+                    }
+                  </style>
+                </head>
+                <body>
+                  <main>
+                    <h1>Order Book API</h1>
+                    <p>
+                      Multi-instrument in-memory order book and matching engine exposed as a REST API.
+                    </p>
+                    <ul>
+                      <li>
+                        <a href="/swagger-ui.html">API documentation (Swagger UI)</a>
+                        : browse and try out every endpoint.
+                      </li>
+                      <li>
+                        <a href="/v3/api-docs">OpenAPI JSON</a>
+                        : the raw specification of the API.
+                      </li>
+                    </ul>
+                    <footer>All endpoints live under <code>/api</code>.</footer>
+                  </main>
+                </body>
+                </html>
+                """;
+    }
+}
