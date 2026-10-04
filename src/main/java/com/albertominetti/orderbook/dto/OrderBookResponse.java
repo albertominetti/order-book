@@ -33,4 +33,15 @@ public record OrderBookResponse(
                 snapshot.spread(),
                 snapshot.lastPrice());
     }
+
+    /**
+     * The book of an instrument that has no resting order yet: no level on either side, and no best
+     * price, spread or last price either.
+     *
+     * <p>The push channel streams this to a subscriber of a symbol whose book does not exist yet, so
+     * opening a stream is never an error and the client has something to render right away.</p>
+     */
+    public static OrderBookResponse empty() {
+        return new OrderBookResponse(List.of(), List.of(), null, null, null, null);
+    }
 }
