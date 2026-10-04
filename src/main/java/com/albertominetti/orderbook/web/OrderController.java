@@ -13,6 +13,7 @@ import com.albertominetti.orderbook.exception.OrderNotFoundException;
 import com.albertominetti.orderbook.exception.OrderStateException;
 import com.albertominetti.orderbook.exception.UnknownInstrumentException;
 import com.albertominetti.orderbook.service.InstrumentCatalog;
+import com.albertominetti.orderbook.service.MarketBroadcaster;
 import com.albertominetti.orderbook.service.OrderService;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Max;
@@ -57,10 +58,13 @@ public class OrderController {
 
     private final OrderService orderService;
     private final InstrumentCatalog instrumentCatalog;
+    private final MarketBroadcaster broadcaster;
 
-    public OrderController(OrderService orderService, InstrumentCatalog instrumentCatalog) {
+    public OrderController(OrderService orderService, InstrumentCatalog instrumentCatalog,
+                           MarketBroadcaster broadcaster) {
         this.orderService = orderService;
         this.instrumentCatalog = instrumentCatalog;
+        this.broadcaster = broadcaster;
     }
 
     /**
@@ -72,6 +76,7 @@ public class OrderController {
     @PostMapping("/orders")
     public ResponseEntity<MatchResponse> submitOrder(@Valid @RequestBody CreateOrderRequest request) {
         MatchResponse response = MatchResponse.from(orderService.submitOrder(request));
+        publish(response.order().symbol(), response.trades());
         URI location = UriComponentsBuilder.fromPath("/api/orders/{id}")
                 .buildAndExpand(response.order().id())
                 .toUri();
@@ -96,7 +101,9 @@ public class OrderController {
      */
     @DeleteMapping("/orders/{id}")
     public OrderResponse cancelOrder(@PathVariable UUID id) {
-        return OrderResponse.from(orderService.cancelOrder(id));
+        OrderResponse response = OrderResponse.from(orderService.cancelOrder(id));
+        publishBookOnly(response.symbol());
+        return response;
     }
 
     /** Every active instrument with its resting orders, best prices and last price. */
@@ -164,4 +171,31 @@ public class OrderController {
                 .map(TradeResponse::from)
                 .toList();
     }
+
+    /**
+     * Pushes the new state of one instrument to whoever subscribed to its stream. It runs after the
+     * engine released its lock, so a slow subscriber can never slow the matching down; the payloads
+     * are the same response records the REST endpoints return, so both channels carry the same JSON.
+     *
+     * @param rawSymbol the instrument whose state changed
+     * @param trades    the trades the mutation generated, or an empty list to stream the current tape
+     */
+    private void publish(String rawSymbol, List<TradeResponse> trades) {
+        String symbol = SymbolRules.normalize(rawSymbol);
+        publishBookOnly(symbol);
+        broadcaster.publishTrades(symbol, trades);
+    }
+
+    /**
+     * Pushes only the book (and the instrument list) of one instrument: a cancellation changes the
+     * book but generates no trade, so no {@code trades} event is emitted.
+     *
+     * @param rawSymbol the instrument whose book changed
+     */
+    private void publishBookOnly(String rawSymbol) {
+        String symbol = SymbolRules.normalize(rawSymbol);
+        broadcaster.publishBook(symbol, OrderBookResponse.from(orderService.getBookSnapshot(symbol)));
+        broadcaster.publishInstruments(broadcaster.instrumentStats());
+    }
 }
+
