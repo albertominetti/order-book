@@ -711,9 +711,10 @@ with `Content-Type: application/problem+json` and produced by `GlobalExceptionHa
 
 Besides the five standard members (`type`, `title`, `status`, `detail`, `instance`) it carries two
 extensions: `code`, a stable machine-readable error code, and `violations`, the field-level validation
-details. `flowId` repeats the `X-Flow-ID` response header. `instance`, `flowId` and `violations` are
-omitted when they have no value, because Jackson is configured with `default-property-inclusion: non_null`.
-The `code` is stable and machine-readable:
+details. `flowId` repeats the `X-Flow-ID` response header. `instance` and `flowId` are omitted when
+they have no value (Jackson is configured with `default-property-inclusion: non_null`); `violations`
+is always present and is an empty array when there is nothing to report. The `code` is stable and
+machine-readable:
 
 | Code                   | Status | Raised when                                                           |
 |------------------------|--------|-----------------------------------------------------------------------|
