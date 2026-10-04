@@ -1,0 +1,16 @@
+# Build output: rebuilt inside the image, never copied from the host.
+target/
+
+# Version control metadata.
+.git/
+
+# IDE metadata.
+.idea/
+*.iml
+.vscode/
+
+# Logs.
+*.log
+
+# Documentation: not needed to build or run the image.
+README.md
