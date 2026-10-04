@@ -298,8 +298,8 @@ to it with a prominent "Open the web app (Vue 3)" entry.
 
 What it does:
 
-- switch instrument: `BTC-USD` and `ETH-USD` quick buttons, a free text field for any symbol, and
-  the active instruments of `GET /api/instruments`, clickable to switch;
+  - switch instrument: a searchable dropdown that offers Swiss (SIX) tickers plus the S&P 500 constituents, with type-to-search by ticker, also accepts any free text symbol, and
+    the active instruments of `GET /api/instruments`, clickable to switch;
 - submit orders, BUY or SELL, LIMIT or MARKET, through `POST /api/orders`, with the price required
   only for a LIMIT order;
 - show the live book of the selected instrument from `GET /api/instruments/{symbol}/orderbook`, with
