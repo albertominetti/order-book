@@ -35,6 +35,21 @@
       margin: 0 0 1.5rem;
       color: #4a5159;
     }
+    .cta {
+      margin: 0 0 1.5rem;
+    }
+    .cta a {
+      display: inline-block;
+      padding: 0.55rem 1.1rem;
+      background: #1a5fb4;
+      color: #ffffff;
+      font-weight: 600;
+      text-decoration: none;
+      border-radius: 0.4rem;
+    }
+    .cta a:hover {
+      background: #17509a;
+    }
     ul {
       margin: 0;
       padding-left: 1.25rem;
@@ -58,7 +73,14 @@
     <p>
       Multi-instrument in-memory order book and matching engine exposed as a REST API.
     </p>
+    <p class="cta">
+      <a th:href="@{/ui}" href="/ui">Open the web UI</a>
+    </p>
     <ul>
+      <li>
+        <a th:href="@{/ui}" href="/ui">Web UI</a>
+        : submit orders and watch the book, the trades and the instruments live.
+      </li>
       <li>
         <a th:href="@{/swagger-ui.html}" href="/swagger-ui.html">API documentation (Swagger UI)</a>
         : browse and try out every endpoint.

@@ -24,6 +24,7 @@ application lifetime.
 - List of active instruments with their stats.
 - Recent trades tape per instrument.
 - Symbol normalization (trim + upper-case) and shape validation.
+- Interactive web UI at `/ui` to submit orders and watch the market, with no frontend build.
 - Validation and consistent error responses (`201`, `200`, `400`, `404`, `405`, `422`).
 - Thread-safe: every engine has its own lock, so instruments never block each other.
 
@@ -45,7 +46,8 @@ mvn test
 mvn spring-boot:run
 ```
 
-Then open <http://localhost:8080/swagger-ui.html>, or submit an order:
+Then open <http://localhost:8080/ui> for the interactive web UI, or
+<http://localhost:8080/swagger-ui.html> for the API reference, or submit an order:
 
 ```bash
 curl -s -X POST http://localhost:8080/api/orders \
@@ -131,6 +133,7 @@ and `PORT` is assigned by Render and picked up by `server.port`.
 Once deployed, the whole API is served on the Render URL, so nothing changes but the host:
 
 - Swagger UI: `https://<service>.onrender.com/swagger-ui.html`
+- Web UI: `https://<service>.onrender.com/ui`
 - REST API: `https://<service>.onrender.com/api/instruments`
 
 ```bash
@@ -161,6 +164,7 @@ src/main/java/com/albertominetti/orderbook
 ├── web/
 │   ├── OrderController           REST endpoints
 │   ├── HomeController            landing page at /, links to the documentation
+│   ├── UiController              web UI at /ui
 │   └── GlobalExceptionHandler    maps exceptions to HTTP responses
 ├── dto/                          request/response records
 │   ├── CreateOrderRequest        order payload, symbol included
@@ -178,11 +182,14 @@ src/main/java/com/albertominetti/orderbook
     └── OrderStateException       order lifecycle broken     -> 422
 
 src/main/resources/application.yml   configuration (YAML)
+src/main/resources/templates/
+├── index.html                       landing page served at /
+└── ui.html                          self contained web UI served at /ui
 
 src/test/java/com/albertominetti/orderbook
 ├── engine/MatchingEngineTest.java
 ├── service/MarketRegistryTest.java
-└── web/OrderApiIntegrationTest.java
+└── web/OrderApiIntegrationTest.java, HomePageTest.java, UiPageTest.java
 ```
 
 ### Design decisions
@@ -246,6 +253,36 @@ platform and falls back to `8080` locally), the Jackson defaults, the springdoc 
 log levels. Jackson is configured with `default-property-inclusion: non_null`, so optional fields such
 as `price` on a MARKET order, or `bestAsk` on a one-sided book, are simply omitted from the JSON.
 
+## Web UI
+
+A small interactive page is served at <http://localhost:8080/ui>, so the API can be exercised from a
+browser without writing a single `curl` command. It is a single Thymeleaf template
+(`templates/ui.html`, served by `UiController`) with inline CSS and plain vanilla JavaScript: no
+frontend build, no dependency and no external asset, so the deployed service serves exactly the same
+page as a local run.
+
+The page calls the REST API from the browser with relative URLs on the same origin, and it offers:
+
+- an **instrument bar** with a symbol field, quick buttons for `BTC-USD` and `ETH-USD`, and the
+  active symbol shown next to them;
+- an **order entry form** (`POST /api/orders`) with side, type, price and quantity, where the price is
+  required for a LIMIT order and disabled for a MARKET order, followed by the status of the created
+  order and of the trades it generated;
+- an **order book panel** with best bid, best ask, spread, last price, bids from the highest price
+  down and asks from the lowest price up;
+- a **trades panel** with the last 20 trades, newest first;
+- an **instruments panel** where clicking a row switches the active symbol;
+- a **my orders panel** that remembers, in browser memory only, the orders submitted from that page,
+  with a `Cancel` button on each of them plus a field to cancel an arbitrary order id
+  (`DELETE /api/orders/{id}`);
+- a **status area** that shows the `code` and the `message` of the uniform API error payload when a
+  call fails.
+
+The book, the trades and the instrument list are polled once per second, with at most one request per
+stream in flight, so a slow answer makes a tick skip instead of piling requests up. The page lives in
+memory like the rest of the project: reloading it forgets the tracked orders, since the ids are kept
+in the page only.
+
 ## API documentation
 
 springdoc-openapi is included, so an interactive API reference is generated at runtime:
@@ -254,8 +291,8 @@ springdoc-openapi is included, so an interactive API reference is generated at r
 - OpenAPI JSON: <http://localhost:8080/v3/api-docs>
 
 The root path <http://localhost:8080/> serves a small landing page (`HomeController`) that describes
-the service and links to Swagger UI and to the raw OpenAPI JSON, so opening the application in a
-browser is enough to find the documentation.
+the service, links to the web UI and links to Swagger UI and to the raw OpenAPI JSON, so opening the
+application in a browser is enough to find everything.
 
 ## REST API
 
@@ -517,7 +554,7 @@ analysis removes unused code and enables early class initialization.
 mvn test
 ```
 
-The suite is organized in three layers plus the landing page test:
+The suite is organized in three layers plus the two page tests:
 
 - `MatchingEngineTest`: the matching core on a frozen clock. Resting orders, full match, partial fills,
   price-time priority (best price first, FIFO inside a level), market orders sweeping several levels
@@ -533,6 +570,8 @@ The suite is organized in three layers plus the landing page test:
   instrument book and trade tape, instrument listing, the full error matrix and instrument isolation.
 - `HomePageTest`: the landing page at `/` answers `200` with an HTML body linking to Swagger UI and
   to the OpenAPI JSON.
+- `UiPageTest`: the web UI at `/ui` answers `200` with an HTML body carrying the stable element ids
+  its own script binds to, and with no external asset.
 
 ## License
 
