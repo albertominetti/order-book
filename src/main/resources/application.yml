@@ -12,7 +12,8 @@ spring:
     log-resolved-exception: false
 
 server:
-  port: 8080
+  # Reads the port provided by the platform (Render sets PORT), falling back to 8080 locally.
+  port: ${PORT:8080}
 
 logging:
   level:

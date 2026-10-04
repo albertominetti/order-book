@@ -53,6 +53,87 @@ curl -s -X POST http://localhost:8080/api/orders \
   -d '{"symbol":"BTC-USD","side":"BUY","type":"LIMIT","price":100.50,"quantity":10}'
 ```
 
+## Deploy
+
+The project ships with a multi-stage `Dockerfile` at the root and a Render Blueprint in
+`render.yaml`, so the same artifact runs locally and on Render.
+
+### Run the image locally
+
+```bash
+# build the image
+docker build -t order-book .
+
+# run it on http://localhost:8080
+docker run -p 8080:8080 order-book
+```
+
+The build stage compiles the jar with Maven, the runtime stage copies it into a slim
+`eclipse-temurin:25-jre` image and runs it as a non-root user. `JAVA_TOOL_OPTIONS` caps the heap at
+75% of the available memory and selects the Serial GC, so the JVM stays comfortable on a small
+instance.
+
+### Container image on GitHub Container Registry
+
+The same `Dockerfile` is built and pushed to the GitHub Container Registry by the GitHub Actions
+workflow `.github/workflows/docker-publish.yml`, as `ghcr.io/albertominetti/order-book`. It runs on
+every push to `main` or to a feature branch, on every `v*` tag, and on demand from the **Actions**
+tab with **Run workflow**.
+
+Each run produces:
+
+- `latest`, but only on `main`, the default branch, so `latest` always tracks the default branch;
+- the branch name on every other branch, for example `deploy/docker-render`;
+- `sha-<short-sha>` on every push, an immutable tag that always points to that exact commit;
+- the version without the leading `v` on `v*` tags, so `v1.2.0` also publishes `1.2.0`.
+
+Pull and run the published image:
+
+```bash
+# pull the image built from main
+docker pull ghcr.io/albertominetti/order-book:latest
+
+# run it on http://localhost:8080
+docker run -p 8080:8080 ghcr.io/albertominetti/order-book:latest
+```
+
+A new package is private by default, so a private image needs a login first:
+
+```bash
+echo "$GITHUB_TOKEN" | docker login ghcr.io -u <your-github-user> --password-stdin
+```
+
+The visibility can be changed to public in the package settings
+(**Settings > Packages > order-book > Change visibility**). Once the package is public, the
+`docker pull` above works without any login.
+
+### Deploy on Render with the Blueprint
+
+1. Push this repository to GitHub, GitLab or Bitbucket.
+2. In the Render dashboard choose **New > Blueprint**, then connect the repository. Render reads
+   `render.yaml` from the repository root and creates everything it declares, no manual
+   configuration needed.
+3. Click **Apply**. Render builds the root `Dockerfile` and starts the service on the
+   `order-book` free plan in the `frankfurt` region, with automatic deploys enabled on every
+   commit.
+
+The Blueprint declares no secrets, because the API needs none: it keeps all state in memory.
+
+On the free plan the service **sleeps after a period of inactivity** and the first request after a
+sleep takes a few seconds while the instance wakes up. The health check polls `/api/instruments`,
+and `PORT` is assigned by Render and picked up by `server.port`.
+
+### Try the deployed service
+
+Once deployed, the whole API is served on the Render URL, so nothing changes but the host:
+
+- Swagger UI: `https://<service>.onrender.com/swagger-ui.html`
+- REST API: `https://<service>.onrender.com/api/instruments`
+
+```bash
+curl -s https://<service>.onrender.com/api/instruments
+```
+
 ## Architecture
 
 ```
@@ -156,7 +237,8 @@ terminal and can never change, so they are also the statuses that make a cancel 
 ## Configuration
 
 Configuration lives in `src/main/resources/application.yml` (YAML), not in a `.properties` file. It
-sets the application name, the HTTP port (`8080`), the Jackson defaults, the springdoc paths and the
+sets the application name, the HTTP port (`${PORT:8080}`, so it reads the port provided by the
+platform and falls back to `8080` locally), the Jackson defaults, the springdoc paths and the
 log levels. Jackson is configured with `default-property-inclusion: non_null`, so optional fields such
 as `price` on a MARKET order, or `bestAsk` on a one-sided book, are simply omitted from the JSON.
 

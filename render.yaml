@@ -1,0 +1,18 @@
+# Render Blueprint (https://render.com/docs/blueprint-spec)
+#
+# Deploys the order-book REST API as a single free Docker web service.
+# Render builds the root Dockerfile and injects PORT, which application.yml
+# reads with a local fallback of 8080.
+
+services:
+  - type: web
+    name: order-book
+    runtime: docker
+    plan: free
+    region: frankfurt
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /api/instruments
+    autoDeploy: true
+    envVars:
+      - key: JAVA_TOOL_OPTIONS
+        value: "-XX:MaxRAMPercentage=75 -XX:+UseSerialGC"
