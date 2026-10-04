@@ -113,9 +113,12 @@ The visibility can be changed to public in the package settings
 2. In the Render dashboard choose **New > Blueprint**, then connect the repository. Render reads
    `render.yaml` from the repository root and creates everything it declares, no manual
    configuration needed.
-3. Click **Apply**. Render builds the root `Dockerfile` and starts the service on the
-   `order-book` free plan in the `frankfurt` region, with automatic deploys enabled on every
-   commit.
+3. Click **Apply**. Render pulls and runs the prebuilt GraalVM native image from GHCR
+   (`ghcr.io/albertominetti/order-book:native`) on the `order-book` free plan in the
+   `frankfurt` region, with automatic deploys enabled on every commit. The GHCR package
+   must be public for Render to pull it anonymously; if it is private, add a registry
+   credential in Render (Workspace Settings) and reference it via `image.creds` in
+   `render.yaml`.
 
 The Blueprint declares no secrets, because the API needs none: it keeps all state in memory.
 
