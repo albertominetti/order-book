@@ -1,11 +1,12 @@
 # Render Blueprint (https://render.com/docs/blueprint-spec)
 #
-# Deploys the order-book REST API from the prebuilt GraalVM NATIVE image published to
-# GitHub Container Registry by .github/workflows/native-image.yml. The native image starts
-# in milliseconds and uses a fraction of the memory of the JVM image.
-# NOTE: The GHCR package must be PUBLIC for Render to pull it anonymously. If the package is
-# PRIVATE, you must add a registry credential in Render (Workspace Settings) and reference
-# it via `image.creds`.
+# Two free web services:
+# - albertos-order-book:         production, runs the prebuilt GraalVM native image from GHCR.
+# - albertos-order-book-preview: preview, BUILT from the `preview` branch (root Dockerfile), so any
+#   commit pushed or merged into `preview` is deployed for testing before it reaches `main`.
+#
+# NOTE: the GHCR package must be PUBLIC for Render to pull the native image anonymously. If it is
+# PRIVATE, add a registry credential in Render (Workspace Settings) and reference it via `image.creds`.
 
 services:
   - type: web
@@ -13,6 +14,15 @@ services:
     runtime: image
     image:
       url: ghcr.io/albertominetti/order-book:native
+    plan: free
+    region: frankfurt
+    healthCheckPath: /api/instruments
+
+  - type: web
+    name: albertos-order-book-preview
+    runtime: docker
+    branch: preview
+    dockerfilePath: ./Dockerfile
     plan: free
     region: frankfurt
     healthCheckPath: /api/instruments
