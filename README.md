@@ -73,6 +73,40 @@ The build stage compiles the jar with Maven, the runtime stage copies it into a 
 75% of the available memory and selects the Serial GC, so the JVM stays comfortable on a small
 instance.
 
+### Container image on GitHub Container Registry
+
+The same `Dockerfile` is built and pushed to the GitHub Container Registry by the GitHub Actions
+workflow `.github/workflows/docker-publish.yml`, as `ghcr.io/albertominetti/order-book`. It runs on
+every push to `main` or to a feature branch, on every `v*` tag, and on demand from the **Actions**
+tab with **Run workflow**.
+
+Each run produces:
+
+- `latest`, but only on `main`, the default branch, so `latest` always tracks the default branch;
+- the branch name on every other branch, for example `deploy/docker-render`;
+- `sha-<short-sha>` on every push, an immutable tag that always points to that exact commit;
+- the version without the leading `v` on `v*` tags, so `v1.2.0` also publishes `1.2.0`.
+
+Pull and run the published image:
+
+```bash
+# pull the image built from main
+docker pull ghcr.io/albertominetti/order-book:latest
+
+# run it on http://localhost:8080
+docker run -p 8080:8080 ghcr.io/albertominetti/order-book:latest
+```
+
+A new package is private by default, so a private image needs a login first:
+
+```bash
+echo "$GITHUB_TOKEN" | docker login ghcr.io -u <your-github-user> --password-stdin
+```
+
+The visibility can be changed to public in the package settings
+(**Settings > Packages > order-book > Change visibility**). Once the package is public, the
+`docker pull` above works without any login.
+
 ### Deploy on Render with the Blueprint
 
 1. Push this repository to GitHub, GitLab or Bitbucket.
