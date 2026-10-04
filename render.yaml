@@ -1,18 +1,18 @@
 # Render Blueprint (https://render.com/docs/blueprint-spec)
 #
-# Deploys the order-book REST API as a single free Docker web service.
-# Render builds the root Dockerfile and injects PORT, which application.yml
-# reads with a local fallback of 8080.
+# Deploys the order-book REST API from the prebuilt GraalVM NATIVE image published to
+# GitHub Container Registry by .github/workflows/native-image.yml. The native image starts
+# in milliseconds and uses a fraction of the memory of the JVM image.
+# NOTE: The GHCR package must be PUBLIC for Render to pull it anonymously. If the package is
+# PRIVATE, you must add a registry credential in Render (Workspace Settings) and reference
+# it via `image.creds`.
 
 services:
   - type: web
     name: order-book
-    runtime: docker
+    runtime: image
+    image:
+      url: ghcr.io/albertominetti/order-book:native
     plan: free
     region: frankfurt
-    dockerfilePath: ./Dockerfile
     healthCheckPath: /api/instruments
-    autoDeploy: true
-    envVars:
-      - key: JAVA_TOOL_OPTIONS
-        value: "-XX:MaxRAMPercentage=75 -XX:+UseSerialGC"
