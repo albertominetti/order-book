@@ -30,11 +30,12 @@ import java.util.function.Supplier;
  * the trade tape and {@link InstrumentStatsResponse} for the instrument list. A client therefore
  * reuses one parser for both channels.</p>
  *
- * <p>The push channel is deliberately more permissive than the query endpoints: a stream can be
- * opened for any well formed symbol, even one that has no book yet, and starts with an empty book.
- * {@code GET /api/instruments/{symbol}/orderbook} and {@code .../trades} still answer
- * {@code 404 UNKNOWN_INSTRUMENT} for such a symbol, because a snapshot of a book that does not exist
- * is a question with no answer.</p>
+ * <p>The push channel and the query endpoints agree on what an instrument nobody has traded on is:
+ * an empty state, not a missing resource. A stream can be opened for any well formed symbol, even one
+ * that has no book yet, and starts with an empty book, an empty order list and an empty tape, while
+ * {@code GET /api/instruments/{symbol}/orderbook} and {@code .../trades} answer {@code 200} with
+ * that very same empty book and tape. Only a malformed symbol is an error, {@code 400}, on either
+ * channel.</p>
  *
  * <p>This component is purely additive: it only writes to whoever subscribed, so a broken subscriber
  * can never affect a matching engine or a REST response. Publishing never throws, it only drops the

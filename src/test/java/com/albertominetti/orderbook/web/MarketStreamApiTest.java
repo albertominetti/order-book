@@ -130,19 +130,23 @@ class MarketStreamApiTest {
     }
 
     @Test
-    @DisplayName("A stream on a symbol without a book creates no instrument and its REST queries are 404")
+    @DisplayName("A stream on a symbol without a book creates no instrument and its REST queries are an empty 200")
     void streamingDoesNotCreateTheInstrumentNorChangeItsRestQueries() throws Exception {
         submit("BTC-USD", "BUY", "100.00", "2").andExpect(status().isCreated());
 
         mockMvc.perform(get("/api/instruments/NOPE/stream")).andExpect(status().isOk());
 
-        // The push channel is permissive, the query endpoints are not: they still answer 404.
+        // The push channel and the query endpoints agree: an instrument nobody traded on is empty,
+        // not missing, so both REST queries answer 200 with nothing in it.
         mockMvc.perform(get("/api/instruments/NOPE/orderbook"))
-                .andExpect(status().isNotFound())
-                .andExpect(jsonPath("$.code").value("UNKNOWN_INSTRUMENT"));
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.bids").isEmpty())
+                .andExpect(jsonPath("$.asks").isEmpty())
+                .andExpect(jsonPath("$.bestBid").doesNotExist())
+                .andExpect(jsonPath("$.bestAsk").doesNotExist());
         mockMvc.perform(get("/api/instruments/NOPE/trades"))
-                .andExpect(status().isNotFound())
-                .andExpect(jsonPath("$.code").value("UNKNOWN_INSTRUMENT"));
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(0));
 
         assertThat(broadcaster.subscriberCount()).isEqualTo(1);
         mockMvc.perform(get("/api/instruments"))

@@ -459,14 +459,16 @@ class OrderApiIntegrationTest {
     }
 
     @Test
-    @DisplayName("GET /api/instruments/{symbol}/orderbook returns 404 UNKNOWN_INSTRUMENT for an untouched symbol")
+    @DisplayName("GET /api/instruments/{symbol}/orderbook returns 200 with an empty book for an untouched symbol")
     void unknownInstrumentOnOrderBook() throws Exception {
         mockMvc.perform(get("/api/instruments/NOPE/orderbook"))
-                .andExpect(status().isNotFound())
-                .andExpect(jsonPath("$.status").value(404))
-                .andExpect(jsonPath("$.code").value("UNKNOWN_INSTRUMENT"))
-                .andExpect(jsonPath("$.message").value("unknown instrument 'NOPE'"))
-                .andExpect(jsonPath("$.path").value("/api/instruments/NOPE/orderbook"));
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.bids").isEmpty())
+                .andExpect(jsonPath("$.asks").isEmpty())
+                .andExpect(jsonPath("$.bestBid").doesNotExist())
+                .andExpect(jsonPath("$.bestAsk").doesNotExist())
+                .andExpect(jsonPath("$.spread").doesNotExist())
+                .andExpect(jsonPath("$.lastPrice").doesNotExist());
     }
 
     @Test
@@ -529,12 +531,11 @@ class OrderApiIntegrationTest {
     }
 
     @Test
-    @DisplayName("GET /api/instruments/{symbol}/trades returns 404 UNKNOWN_INSTRUMENT for an untouched symbol")
+    @DisplayName("GET /api/instruments/{symbol}/trades returns 200 with an empty tape for an untouched symbol")
     void unknownInstrumentOnTrades() throws Exception {
         mockMvc.perform(get("/api/instruments/NOPE/trades"))
-                .andExpect(status().isNotFound())
-                .andExpect(jsonPath("$.status").value(404))
-                .andExpect(jsonPath("$.code").value("UNKNOWN_INSTRUMENT"));
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(0));
     }
 
     // ------------------------------------------------------------------ instrument isolation
