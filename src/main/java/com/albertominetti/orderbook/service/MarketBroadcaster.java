@@ -3,6 +3,7 @@ package com.albertominetti.orderbook.service;
 import com.albertominetti.orderbook.domain.SymbolRules;
 import com.albertominetti.orderbook.dto.InstrumentStatsResponse;
 import com.albertominetti.orderbook.dto.OrderBookResponse;
+import com.albertominetti.orderbook.dto.OrderResponse;
 import com.albertominetti.orderbook.dto.TradeResponse;
 import org.springframework.http.MediaType;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -60,6 +61,9 @@ public class MarketBroadcaster {
     /** Event carrying the instrument list. */
     public static final String INSTRUMENTS_EVENT = "instruments";
 
+    /** Event carrying all orders of the instrument. */
+    public static final String ORDERS_EVENT = "orders";
+
     private final OrderService orderService;
 
     /** Subscribers of the per-instrument streams, keyed by normalized symbol. */
@@ -96,6 +100,7 @@ public class MarketBroadcaster {
                 ? OrderBookResponse.from(orderService.getBookSnapshot(symbol))
                 : OrderBookResponse.empty();
         List<TradeResponse> tape = known ? tradeTape(symbol) : List.of();
+        List<OrderResponse> orders = known ? ordersList(symbol, 50) : List.of();
 
         SseEmitter emitter = newEmitter();
         Set<SseEmitter> subscribers = bookSubscribers.computeIfAbsent(symbol, key -> subscribersOf());
@@ -103,6 +108,10 @@ public class MarketBroadcaster {
         register(subscribers, emitter);
 
         if (!push(emitter, BOOK_EVENT, book)) {
+            remove(subscribers, emitter);
+            return emitter;
+        }
+        if (!push(emitter, ORDERS_EVENT, orders)) {
             remove(subscribers, emitter);
             return emitter;
         }
@@ -146,6 +155,11 @@ public class MarketBroadcaster {
     /** Pushes a trade tape to the subscribers of one instrument. */
     public void publishTrades(String symbol, Object payload) {
         broadcast(bookSubscribersOf(symbol), () -> event(TRADES_EVENT, payload));
+    }
+
+    /** Pushes all orders to the subscribers of one instrument. */
+    public void publishOrders(String symbol, Object payload) {
+        broadcast(bookSubscribersOf(symbol), () -> event(ORDERS_EVENT, payload));
     }
 
     /** Pushes the instrument list to the subscribers of the market stream. */
@@ -260,6 +274,13 @@ public class MarketBroadcaster {
     private List<TradeResponse> tradeTape(String symbol) {
         return orderService.getRecentTrades(symbol, STREAM_TRADE_LIMIT).stream()
                 .map(TradeResponse::from)
+                .toList();
+    }
+
+    /** All orders of one instrument, newest first. */
+    private List<OrderResponse> ordersList(String symbol, int limit) {
+        return orderService.getOrders(symbol, limit).stream()
+                .map(OrderResponse::from)
                 .toList();
     }
 

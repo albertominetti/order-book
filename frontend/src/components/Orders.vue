@@ -62,7 +62,7 @@ function visibleOrders() {
 <template>
   <section class="panel">
     <header>
-      <h2>My orders</h2>
+      <h2>Orders</h2>
       <label class="toggle">
         <input
           type="checkbox"
@@ -76,7 +76,7 @@ function visibleOrders() {
     <div v-if="error" class="error" role="alert">{{ error }}</div>
 
     <p v-if="!error && visibleOrders().length === 0" class="empty">
-      No order submitted from this browser yet.
+      No orders on this instrument yet.
     </p>
 
     <div v-else class="table-scroll">
