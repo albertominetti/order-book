@@ -29,6 +29,12 @@ import java.util.function.Supplier;
  * the trade tape and {@link InstrumentStatsResponse} for the instrument list. A client therefore
  * reuses one parser for both channels.</p>
  *
+ * <p>The push channel is deliberately more permissive than the query endpoints: a stream can be
+ * opened for any well formed symbol, even one that has no book yet, and starts with an empty book.
+ * {@code GET /api/instruments/{symbol}/orderbook} and {@code .../trades} still answer
+ * {@code 404 UNKNOWN_INSTRUMENT} for such a symbol, because a snapshot of a book that does not exist
+ * is a question with no answer.</p>
+ *
  * <p>This component is purely additive: it only writes to whoever subscribed, so a broken subscriber
  * can never affect a matching engine or a REST response. Publishing never throws, it only drops the
  * subscribers that cannot be written to.</p>
@@ -70,21 +76,26 @@ public class MarketBroadcaster {
      * Subscribes to the book and the trades of one instrument and immediately pushes its current
      * state, so a fresh subscriber is never blank.
      *
+     * <p>Any valid symbol can be streamed, even one whose book does not exist yet: such a subscriber
+     * is registered like any other and receives an empty book plus an empty trade tape, then the
+     * real state as soon as the first order creates the book. Nothing is created here, so opening a
+     * stream never brings an instrument into existence. Only a malformed symbol is rejected.</p>
+     *
      * @param rawSymbol symbol to normalize (trim + uppercase)
      * @return the emitter to hand back to the client
-     * @throws IllegalArgumentException    when the symbol is missing or malformed (HTTP 400)
-     * @throws com.albertominetti.orderbook.exception.UnknownInstrumentException when the symbol is
-     *                                                                    well formed but has no
-     *                                                                    book yet (HTTP 404)
+     * @throws IllegalArgumentException when the symbol is missing or malformed (HTTP 400)
      */
     public SseEmitter subscribeBook(String rawSymbol) {
         String symbol = SymbolRules.normalize(rawSymbol);
 
-        // The current state is resolved before anything is registered: an unknown instrument throws
-        // here, so the caller answers 404 UNKNOWN_INSTRUMENT instead of opening a stream that would
-        // carry nothing at all and would leave a subscriber behind.
-        OrderBookResponse book = OrderBookResponse.from(orderService.getBookSnapshot(symbol));
-        List<TradeResponse> tape = tradeTape(symbol);
+        // The initial state is resolved before anything is registered, so an emitter that cannot be
+        // written to never leaves a subscriber behind. A symbol without an engine is not a failure:
+        // it is the empty state of an instrument no order has reached yet.
+        boolean known = orderService.hasInstrument(symbol);
+        OrderBookResponse book = known
+                ? OrderBookResponse.from(orderService.getBookSnapshot(symbol))
+                : OrderBookResponse.empty();
+        List<TradeResponse> tape = known ? tradeTape(symbol) : List.of();
 
         SseEmitter emitter = newEmitter();
         Set<SseEmitter> subscribers = bookSubscribers.computeIfAbsent(symbol, key -> subscribersOf());

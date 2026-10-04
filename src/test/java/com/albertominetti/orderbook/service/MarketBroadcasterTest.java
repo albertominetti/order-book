@@ -1,10 +1,10 @@
 package com.albertominetti.orderbook.service;
 
+import com.albertominetti.orderbook.domain.InstrumentStats;
 import com.albertominetti.orderbook.domain.OrderType;
 import com.albertominetti.orderbook.domain.Side;
 import com.albertominetti.orderbook.dto.CreateOrderRequest;
 import com.albertominetti.orderbook.dto.OrderBookResponse;
-import com.albertominetti.orderbook.exception.UnknownInstrumentException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -81,12 +81,40 @@ class MarketBroadcasterTest {
     }
 
     @Test
-    @DisplayName("An unknown instrument is rejected with 404 UNKNOWN_INSTRUMENT")
-    void subscribeRejectsAnUnknownInstrument() {
-        assertThatThrownBy(() -> broadcaster.subscribeBook("NOPE"))
-                .isInstanceOf(UnknownInstrumentException.class)
-                .hasMessage("unknown instrument 'NOPE'");
-        assertThat(broadcaster.subscriberCount()).isZero();
+    @DisplayName("A valid symbol with no book yet streams an empty book and an empty tape")
+    void subscribeStreamsAnEmptyBookForAnInstrumentWithoutOne() {
+        RecordingEmitter emitter = subscribe(broadcaster.subscribeBook("UBSG"));
+
+        assertThat(emitter.eventNames()).containsExactly("book", "trades");
+        assertThat(emitter.payload("book")).isEqualTo(OrderBookResponse.empty());
+        assertThat(emitter.payload("trades")).isEqualTo(List.of());
+
+        // The subscriber is registered as any other, so the first order will reach it.
+        assertThat(broadcaster.bookSubscriberCount("UBSG")).isEqualTo(1);
+
+        // Nothing was created: the instrument does not exist until an order says so.
+        assertThat(orderService.listInstruments())
+                .extracting(InstrumentStats::symbol)
+                .containsExactly(SYMBOL);
+    }
+
+    @Test
+    @DisplayName("A subscriber of a symbol without a book gets the real state after the first order")
+    void subscriberOfAnEmptyInstrumentReceivesTheFirstBook() {
+        RecordingEmitter emitter = subscribe(broadcaster.subscribeBook("UBSG"));
+
+        submit("UBSG", "BUY", "42.00", "3");
+
+        broadcaster.publishBook("UBSG", OrderBookResponse.from(orderService.getBookSnapshot("UBSG")));
+
+        assertThat(emitter.eventNames()).containsExactly("book", "trades", "book");
+        assertThat(emitter.payload("book")).isEqualTo(OrderBookResponse.empty());
+        assertThat(emitter.payloads("book")).hasSize(2);
+        assertThat(emitter.payloads("book").get(1)).isInstanceOfSatisfying(OrderBookResponse.class,
+                book -> {
+                    assertThat(book.bids()).hasSize(1);
+                    assertThat(book.bestBid()).isEqualByComparingTo("42.00");
+                });
     }
 
     @Test

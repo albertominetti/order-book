@@ -1,5 +1,5 @@
 <script setup>
-import { ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import {
   cancelOrder,
   describeError,
@@ -11,6 +11,7 @@ import {
   tradeLimit
 } from './api.js'
 import { usePoller } from './usePoller.js'
+import { useStream } from './useStream.js'
 import Instruments from './components/Instruments.vue'
 import MyOrders from './components/MyOrders.vue'
 import OrderBook from './components/OrderBook.vue'
@@ -122,6 +123,46 @@ const bookPoller = usePoller(loadBook, POLL_INTERVAL_MS)
 const tradesPoller = usePoller(loadTrades, POLL_INTERVAL_MS)
 const instrumentsPoller = usePoller(loadInstruments, POLL_INTERVAL_MS)
 
+/**
+ * Live push channel over Server-Sent Events, the same payloads the pollers fetch.
+ *
+ * The pollers keep running, so they are the fallback and the badge in the top bar says which channel
+ * is actually live. A `book` event also lands on a symbol whose book did not exist a moment ago, so
+ * the panels never blink back to "loading" when a fresh instrument is selected.
+ */
+const { connected } = useStream(symbol, {
+  onBook: (payload) => {
+    if (!payload) {
+      return
+    }
+    book.value = payload
+    bookError.value = ''
+    bookLoading.value = false
+  },
+  onTrades: (payload) => {
+    if (!Array.isArray(payload)) {
+      return
+    }
+    trades.value = payload
+    tradesError.value = ''
+  },
+  onInstruments: (payload) => {
+    if (!Array.isArray(payload)) {
+      return
+    }
+    instruments.value = payload
+    instrumentsError.value = ''
+  }
+})
+
+const channelLabel = computed(() => (connected.value ? 'live \u00b7 SSE' : 'polling'))
+
+const channelTitle = computed(() =>
+  connected.value
+    ? 'Live updates are streamed over Server-Sent Events'
+    : 'No event stream, falling back to polling once per second'
+)
+
 function remember(order) {
   const next = orders.value.filter((candidate) => candidate.id !== order.id)
   next.unshift(order)
@@ -175,6 +216,13 @@ function refreshAll() {
       </div>
 
       <div class="symbol-picker">
+        <span
+          class="channel-badge"
+          :class="connected ? 'sse' : 'polling'"
+          :title="channelTitle"
+          role="status"
+          aria-live="polite"
+        >{{ channelLabel }}</span>
         <InstrumentSelect v-model="symbol" />
         <button type="button" class="refresh" @click="refreshAll">Refresh</button>
       </div>
@@ -229,7 +277,7 @@ function refreshAll() {
     </main>
 
     <footer class="footer">
-      <span>Polling every second.</span>
+      <span>{{ connected ? 'Streaming with Server-Sent Events, polling once per second as a fallback.' : 'Polling every second.' }}</span>
       <a href="/">Landing page</a>
       <a href="/swagger-ui.html">Swagger UI</a>
     </footer>
@@ -272,6 +320,30 @@ h1 {
   display: flex;
   align-items: flex-end;
   gap: 0.6rem;
+}
+
+.channel-badge {
+  padding: 0.25rem 0.55rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface-muted);
+  color: var(--text-muted);
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  white-space: nowrap;
+  height: fit-content;
+}
+
+.channel-badge.sse {
+  border-color: var(--bid);
+  background: var(--bid-soft);
+  color: var(--bid);
+}
+
+.channel-badge.polling {
+  border-color: var(--accent);
+  color: var(--accent);
 }
 
 .refresh {
