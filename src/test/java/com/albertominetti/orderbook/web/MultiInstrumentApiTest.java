@@ -133,23 +133,32 @@ class MultiInstrumentApiTest {
     // ------------------------------------------------------------------ unknown instrument
 
     @Test
-    @DisplayName("An unknown instrument is a 404 UNKNOWN_INSTRUMENT on both read endpoints")
+    @DisplayName("An instrument with no book is an empty 200 on both read endpoints, a malformed symbol a 400")
     void unknownInstrumentOnBothEndpoints() throws Exception {
         submit("BTC-USD", "BUY", "100.00", "1");
 
+        // A well formed symbol nobody traded on is an empty instrument, not a missing one.
         mockMvc.perform(get("/api/instruments/NOPE/orderbook"))
-                .andExpect(status().isNotFound())
-                .andExpect(jsonPath("$.status").value(404))
-                .andExpect(jsonPath("$.code").value("UNKNOWN_INSTRUMENT"))
-                .andExpect(jsonPath("$.message").value("unknown instrument 'NOPE'"))
-                .andExpect(jsonPath("$.path").value("/api/instruments/NOPE/orderbook"));
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.bids").isEmpty())
+                .andExpect(jsonPath("$.asks").isEmpty())
+                .andExpect(jsonPath("$.bestBid").doesNotExist())
+                .andExpect(jsonPath("$.bestAsk").doesNotExist());
 
         mockMvc.perform(get("/api/instruments/NOPE/trades"))
-                .andExpect(status().isNotFound())
-                .andExpect(jsonPath("$.status").value(404))
-                .andExpect(jsonPath("$.code").value("UNKNOWN_INSTRUMENT"))
-                .andExpect(jsonPath("$.message").value("unknown instrument 'NOPE'"))
-                .andExpect(jsonPath("$.path").value("/api/instruments/NOPE/trades"));
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(0));
+
+        // Only a malformed symbol is rejected, on both read endpoints.
+        mockMvc.perform(get("/api/instruments/BTC~USD/orderbook"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_ERROR"))
+                .andExpect(jsonPath("$.violations[0].field").value("symbol"));
+
+        mockMvc.perform(get("/api/instruments/BTC~USD/trades"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_ERROR"))
+                .andExpect(jsonPath("$.violations[0].field").value("symbol"));
 
         // Asking for an unknown instrument does not create it.
         mockMvc.perform(get("/api/instruments"))

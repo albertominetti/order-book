@@ -151,9 +151,11 @@ class InstrumentSearchApiTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.length()").value(0));
 
+        // A symbol the search suggested but no order reached is an empty book, not a 404.
         mockMvc.perform(get("/api/instruments/NOPE/orderbook"))
-                .andExpect(status().isNotFound())
-                .andExpect(jsonPath("$.code").value("UNKNOWN_INSTRUMENT"));
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.bids").isEmpty())
+                .andExpect(jsonPath("$.asks").isEmpty());
 
         // Only the instrument created by the order is active, the search suggests symbols only.
         mockMvc.perform(get("/api/instruments"))

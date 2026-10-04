@@ -274,16 +274,17 @@ src/test/java/com/albertominetti/orderbook
   recent trades.
 - **Clock injection.** Engines take a `java.time.Clock` (a `Clock.systemUTC()` bean from
   `EngineConfiguration`), which lets tests produce deterministic timestamps.
-- **The push channel is more permissive than the query endpoints.** `MarketBroadcaster` fans out to
-  one set of `SseEmitter` per symbol plus one set for the instrument list, and it publishes the very
-  same response records the REST endpoints return, so both channels carry the same JSON. A stream can
-  be opened for any well formed symbol: `subscribeBook` registers the subscriber even when no order
-  has created the engine yet and pushes an empty book plus an empty trade tape, so a client that
-  selects a fresh instrument is never answered with an error that would send it back to polling.
-  `GET /api/instruments/{symbol}/orderbook` and `GET /api/instruments/{symbol}/trades` keep answering
-  `404 UNKNOWN_INSTRUMENT`, because a snapshot of a book that does not exist is a question with no
-  answer. Publishing is purely additive and never throws: a subscriber that cannot be written to is
-  dropped and completes, and cannot slow a matching engine down.
+- **An instrument nobody has traded on is an empty state, on both channels.** `MarketBroadcaster` fans
+  out to one set of `SseEmitter` per symbol plus one set for the instrument list, and it publishes the
+  very same response records the REST endpoints return, so both channels carry the same JSON. A stream
+  can be opened for any well formed symbol: `subscribeBook` registers the subscriber even when no order
+  has created the engine yet and pushes an empty book, an empty order list and an empty trade tape, so
+  a client that selects a fresh instrument is never answered with an error that would send it back to
+  polling. The query endpoints agree: `GET /api/instruments/{symbol}/orderbook` and
+  `GET /api/instruments/{symbol}/trades` answer `200` with that very same empty book and tape. Only a
+  malformed symbol is an error, `400`, on either channel. Publishing is purely additive and never
+  throws: a subscriber that cannot be written to is dropped and completes, and cannot slow a matching
+  engine down.
 
 ## How the matching works
 
@@ -357,14 +358,13 @@ What it does:
 - keep the orders submitted from the browser and cancel them with `DELETE /api/orders/{id}`, with a
   table that fits on a phone: below 600px each order becomes a card and the Cancel button gets its
   own full width row, above it the table sits in a horizontally scrollable container;
-- poll every stream once per second, never with more than one request in flight per stream, and stop
-  polling when the page is left;
-- receive the book, the trade tape and the instrument list over Server-Sent Events with the native
-  `EventSource`, and show a badge in the top bar saying which channel is live: `live · SSE` while the
-  stream is connected, `polling` when it is not. The per-symbol stream can be opened for any valid
-  symbol, so an instrument without a book streams an empty book straight away instead of failing, and
-  the 1 second polling stays the fallback the badge announces;
-- show an empty state per panel and the `code` and `message` of the uniform API error payload when a
+  - receive the book, the trade tape and the instrument list over Server-Sent Events with the native
+  `EventSource`. When the stream is connected, it is the single source of truth for the order book,
+  orders and trades and REST polling is stopped; when it disconnects, the app falls back to REST
+  polling. The badge in the top bar shows which channel is live: `live · SSE` while the stream is
+  connected, `polling fallback` when it is not. The per-symbol stream can be opened for any valid
+  symbol, so an instrument without a book streams an empty book straight away instead of failing;
+  - show an empty state per panel and the `code` and `message` of the uniform API error payload when a
   call fails.
 
 All calls use relative `/api` paths, so the app always talks to the same origin that served it: no
@@ -537,8 +537,8 @@ is how the dropdown opens on the Swiss names. The optional `limit` accepts 1 to 
 50.
 
 Searching the catalogue never creates anything: an instrument only exists as a tradable book once an
-order has been submitted for it, so a symbol returned here can still answer
-`404 UNKNOWN_INSTRUMENT` on `/api/instruments/{symbol}/orderbook`.
+order has been submitted for it, so a symbol returned here still answers an **empty** book on
+`/api/instruments/{symbol}/orderbook`.
 
 ```bash
 curl -s 'http://localhost:8080/api/instruments/search?q=ubs&limit=10'
@@ -668,7 +668,7 @@ No bid, no ask, and no `bestBid`, `bestAsk`, `spread` or `lastPrice` either, sin
 omitted when they do not exist. The real state arrives with the very first order on that symbol, on
 the stream that is already open. Opening a stream creates nothing: an instrument still only comes into
 existence through `POST /api/orders`, so `GET /api/instruments/{symbol}/orderbook` and
-`GET /api/instruments/{symbol}/trades` keep answering `404 UNKNOWN_INSTRUMENT` for it, while a
+`GET /api/instruments/{symbol}/trades` answer the very same empty book and `200` for it, while a
 malformed symbol is still `400 VALIDATION_ERROR` on the stream as well.
 
 ## Symbol rules
@@ -680,11 +680,10 @@ A symbol identifies a tradable instrument and is required everywhere.
 - After normalization it must match `[A-Z0-9][A-Z0-9._-]{0,19}`: one to twenty characters, starting
   with a letter or a digit, then letters, digits, dots, underscores and dashes.
 - A **missing or malformed** symbol is `400 VALIDATION_ERROR`, with a `symbol` entry in `violations`.
-- A **well formed but unknown** symbol on a query endpoint (`orderbook` or `trades`) is
-  `404 UNKNOWN_INSTRUMENT`, because no order has ever created that book. `POST /api/orders` is the
-  only way to bring an instrument into existence.
-- A **well formed but unknown** symbol on a **stream** endpoint is not an error at all: the stream
-  opens and streams an empty book until the first order.
+- A **well formed but unknown** symbol is never an error, on the query endpoints (`orderbook` and
+  `trades`) nor on the **stream** endpoints: both answer their empty state, the query endpoints with
+  `200` and an empty book or tape, a stream with an empty book until the first order.
+  `POST /api/orders` is the only way to bring an instrument into existence.
 
 ## Error handling
 
@@ -712,13 +711,14 @@ Every failing request returns the same JSON shape, produced by `GlobalExceptionH
 | `INVALID_PARAMETER`    | `400`  | A parameter has an invalid value, for example a non UUID order id    |
 | `INVALID_ORDER`        | `400`  | A business rule was broken, for example a LIMIT order without a price |
 | `NOT_FOUND`            | `404`  | Unknown order id or unknown path                                      |
-| `UNKNOWN_INSTRUMENT`   | `404`  | A well formed symbol that has no book yet, on `orderbook` or `trades` only |
 | `METHOD_NOT_ALLOWED`   | `405`  | Unsupported HTTP method on an existing path                           |
 | `INVALID_ORDER_STATE`  | `422`  | A well formed request that breaks the order lifecycle, for example cancelling a filled order |
 | `INTERNAL_ERROR`       | `500`  | Last resort handler, so internal failures keep the standard shape     |
 
 The old single book endpoints (`GET /api/orderbook`, `GET /api/trades`) are gone and answer
-`404 NOT_FOUND`: every query is now scoped to an instrument.
+`404 NOT_FOUND`: every query is now scoped to an instrument. `UNKNOWN_INSTRUMENT`, the code
+`MarketRegistry.engineOrThrow` raises, is not part of the API contract any more: the per-instrument
+`orderbook` and `trades` endpoints answer an empty state instead of a missing resource.
 
 ## Deploy
 

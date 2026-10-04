@@ -3,6 +3,7 @@ package com.albertominetti.orderbook.service;
 import com.albertominetti.orderbook.domain.SymbolRules;
 import com.albertominetti.orderbook.dto.InstrumentStatsResponse;
 import com.albertominetti.orderbook.dto.OrderBookResponse;
+import com.albertominetti.orderbook.dto.OrderResponse;
 import com.albertominetti.orderbook.dto.TradeResponse;
 import org.springframework.http.MediaType;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -29,11 +30,12 @@ import java.util.function.Supplier;
  * the trade tape and {@link InstrumentStatsResponse} for the instrument list. A client therefore
  * reuses one parser for both channels.</p>
  *
- * <p>The push channel is deliberately more permissive than the query endpoints: a stream can be
- * opened for any well formed symbol, even one that has no book yet, and starts with an empty book.
- * {@code GET /api/instruments/{symbol}/orderbook} and {@code .../trades} still answer
- * {@code 404 UNKNOWN_INSTRUMENT} for such a symbol, because a snapshot of a book that does not exist
- * is a question with no answer.</p>
+ * <p>The push channel and the query endpoints agree on what an instrument nobody has traded on is:
+ * an empty state, not a missing resource. A stream can be opened for any well formed symbol, even one
+ * that has no book yet, and starts with an empty book, an empty order list and an empty tape, while
+ * {@code GET /api/instruments/{symbol}/orderbook} and {@code .../trades} answer {@code 200} with
+ * that very same empty book and tape. Only a malformed symbol is an error, {@code 400}, on either
+ * channel.</p>
  *
  * <p>This component is purely additive: it only writes to whoever subscribed, so a broken subscriber
  * can never affect a matching engine or a REST response. Publishing never throws, it only drops the
@@ -59,6 +61,9 @@ public class MarketBroadcaster {
 
     /** Event carrying the instrument list. */
     public static final String INSTRUMENTS_EVENT = "instruments";
+
+    /** Event carrying all orders of the instrument. */
+    public static final String ORDERS_EVENT = "orders";
 
     private final OrderService orderService;
 
@@ -96,6 +101,7 @@ public class MarketBroadcaster {
                 ? OrderBookResponse.from(orderService.getBookSnapshot(symbol))
                 : OrderBookResponse.empty();
         List<TradeResponse> tape = known ? tradeTape(symbol) : List.of();
+        List<OrderResponse> orders = known ? ordersList(symbol, 50) : List.of();
 
         SseEmitter emitter = newEmitter();
         Set<SseEmitter> subscribers = bookSubscribers.computeIfAbsent(symbol, key -> subscribersOf());
@@ -103,6 +109,10 @@ public class MarketBroadcaster {
         register(subscribers, emitter);
 
         if (!push(emitter, BOOK_EVENT, book)) {
+            remove(subscribers, emitter);
+            return emitter;
+        }
+        if (!push(emitter, ORDERS_EVENT, orders)) {
             remove(subscribers, emitter);
             return emitter;
         }
@@ -146,6 +156,11 @@ public class MarketBroadcaster {
     /** Pushes a trade tape to the subscribers of one instrument. */
     public void publishTrades(String symbol, Object payload) {
         broadcast(bookSubscribersOf(symbol), () -> event(TRADES_EVENT, payload));
+    }
+
+    /** Pushes all orders to the subscribers of one instrument. */
+    public void publishOrders(String symbol, Object payload) {
+        broadcast(bookSubscribersOf(symbol), () -> event(ORDERS_EVENT, payload));
     }
 
     /** Pushes the instrument list to the subscribers of the market stream. */
@@ -260,6 +275,13 @@ public class MarketBroadcaster {
     private List<TradeResponse> tradeTape(String symbol) {
         return orderService.getRecentTrades(symbol, STREAM_TRADE_LIMIT).stream()
                 .map(TradeResponse::from)
+                .toList();
+    }
+
+    /** All orders of one instrument, newest first. */
+    private List<OrderResponse> ordersList(String symbol, int limit) {
+        return orderService.getOrders(symbol, limit).stream()
+                .map(OrderResponse::from)
                 .toList();
     }
 

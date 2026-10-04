@@ -5,6 +5,7 @@ import com.albertominetti.orderbook.domain.OrderType;
 import com.albertominetti.orderbook.domain.Side;
 import com.albertominetti.orderbook.dto.CreateOrderRequest;
 import com.albertominetti.orderbook.dto.OrderBookResponse;
+import com.albertominetti.orderbook.dto.OrderResponse;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -47,16 +48,20 @@ class MarketBroadcasterTest {
     // ------------------------------------------------------------------ subscribe
 
     @Test
-    @DisplayName("Subscribing to a book immediately pushes the current book and trade tape")
+    @DisplayName("Subscribing to a book immediately pushes the current book, orders and trade tape")
     void subscribeBookPushesCurrentState() {
         RecordingEmitter emitter = subscribe(broadcaster.subscribeBook(SYMBOL));
 
-        assertThat(emitter.eventNames()).containsExactly("book", "trades");
+        assertThat(emitter.eventNames()).containsExactly("book", "orders", "trades");
         assertThat(emitter.payload("book")).isInstanceOfSatisfying(OrderBookResponse.class,
                 book -> {
                     assertThat(book.bids()).hasSize(1);
                     assertThat(book.bestBid()).isEqualByComparingTo("100.00");
                 });
+        assertThat(emitter.payload("orders")).isInstanceOfSatisfying(List.class,
+                orders -> assertThat((List<?>) orders).singleElement()
+                        .isInstanceOfSatisfying(OrderResponse.class,
+                                order -> assertThat(order.symbol()).isEqualTo(SYMBOL)));
         assertThat(emitter.payload("trades")).isEqualTo(List.of());
     }
 
@@ -81,12 +86,13 @@ class MarketBroadcasterTest {
     }
 
     @Test
-    @DisplayName("A valid symbol with no book yet streams an empty book and an empty tape")
+    @DisplayName("A valid symbol with no book yet streams an empty book, empty orders and empty tape")
     void subscribeStreamsAnEmptyBookForAnInstrumentWithoutOne() {
         RecordingEmitter emitter = subscribe(broadcaster.subscribeBook("UBSG"));
 
-        assertThat(emitter.eventNames()).containsExactly("book", "trades");
+        assertThat(emitter.eventNames()).containsExactly("book", "orders", "trades");
         assertThat(emitter.payload("book")).isEqualTo(OrderBookResponse.empty());
+        assertThat(emitter.payload("orders")).isEqualTo(List.of());
         assertThat(emitter.payload("trades")).isEqualTo(List.of());
 
         // The subscriber is registered as any other, so the first order will reach it.
@@ -107,8 +113,9 @@ class MarketBroadcasterTest {
 
         broadcaster.publishBook("UBSG", OrderBookResponse.from(orderService.getBookSnapshot("UBSG")));
 
-        assertThat(emitter.eventNames()).containsExactly("book", "trades", "book");
+        assertThat(emitter.eventNames()).containsExactly("book", "orders", "trades", "book");
         assertThat(emitter.payload("book")).isEqualTo(OrderBookResponse.empty());
+        assertThat(emitter.payloads("orders")).containsExactly(List.of());
         assertThat(emitter.payloads("book")).hasSize(2);
         assertThat(emitter.payloads("book").get(1)).isInstanceOfSatisfying(OrderBookResponse.class,
                 book -> {
@@ -140,11 +147,12 @@ class MarketBroadcasterTest {
         broadcaster.publishTrades(SYMBOL, List.of("a trade"));
         broadcaster.publishInstruments(broadcaster.instrumentStats());
 
-        assertThat(first.eventNames()).containsExactly("book", "trades", "book", "trades");
-        assertThat(second.eventNames()).containsExactly("book", "trades", "book", "trades");
+        assertThat(first.eventNames()).containsExactly("book", "orders", "trades", "book", "trades");
+        assertThat(second.eventNames()).containsExactly("book", "orders", "trades", "book", "trades");
         assertThat(first.payloads("trades")).containsExactly(List.of(), List.of("a trade"));
         assertThat(first.payloads("book")).hasSize(2).allMatch(OrderBookResponse.class::isInstance);
-        assertThat(other.eventNames()).containsExactly("book", "trades");
+        assertThat(first.payloads("orders")).hasSize(1);
+        assertThat(other.eventNames()).containsExactly("book", "orders", "trades");
         assertThat(market.eventNames()).containsExactly("instruments", "instruments");
         assertThat(market.payload("instruments")).isNotNull();
     }
@@ -185,7 +193,7 @@ class MarketBroadcasterTest {
         assertThat(broadcaster.bookSubscriberCount(SYMBOL)).isEqualTo(1);
         assertThat(broken.isCompleted()).isTrue();
         assertThat(healthy.isCompleted()).isFalse();
-        assertThat(healthy.eventNames()).containsExactly("book", "trades", "book");
+        assertThat(healthy.eventNames()).containsExactly("book", "orders", "trades", "book");
     }
 
     @Test

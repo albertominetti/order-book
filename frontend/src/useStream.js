@@ -2,6 +2,7 @@ import { onScopeDispose, ref, watch } from 'vue'
 
 const BOOK_EVENT = 'book'
 const TRADES_EVENT = 'trades'
+const ORDERS_EVENT = 'orders'
 const INSTRUMENTS_EVENT = 'instruments'
 
 const INSTRUMENTS_STREAM = '/api/instruments/stream'
@@ -31,8 +32,10 @@ const INSTRUMENTS_STREAM = '/api/instruments/stream'
  * @param {{
  *   onBook?: (book: object) => void,
  *   onTrades?: (trades: Array<object>) => void,
- *   onInstruments?: (instruments: Array<object>) => void
- * }} [handlers] callbacks for the three events
+ *   onOrders?: (orders: Array<object>) => void,
+ *   onInstruments?: (instruments: Array<object>) => void,
+ *   onStateChange?: (connected: boolean) => void
+ * }} [handlers] callbacks for the events
  * @returns {{ connected: import('vue').Ref<boolean>, connect: () => void, disconnect: () => void }}
  */
 export function useStream(symbol, handlers = {}) {
@@ -90,6 +93,7 @@ export function useStream(symbol, handlers = {}) {
   }
 
   function disconnect() {
+    const wasConnected = connected.value
     closeSource(bookSource)
     closeSource(instrumentsSource)
     bookSource = null
@@ -97,6 +101,13 @@ export function useStream(symbol, handlers = {}) {
     bookOpen = false
     instrumentsOpen = false
     connected.value = false
+    if (wasConnected && typeof handlers.onStateChange === 'function') {
+      try {
+        handlers.onStateChange(false)
+      } catch {
+        // ignore
+      }
+    }
   }
 
   /**
@@ -113,6 +124,13 @@ export function useStream(symbol, handlers = {}) {
   /** True once both streams are established, which is what makes the push channel usable. */
   function markConnected() {
     connected.value = bookOpen && instrumentsOpen
+    if (typeof handlers.onStateChange === 'function') {
+      try {
+        handlers.onStateChange(connected.value)
+      } catch {
+        // ignore
+      }
+    }
   }
 
   function connect() {
@@ -130,6 +148,7 @@ export function useStream(symbol, handlers = {}) {
       instrumentsSource = new EventSource(INSTRUMENTS_STREAM)
 
       listen(bookSource, BOOK_EVENT, handlers.onBook)
+      listen(bookSource, ORDERS_EVENT, handlers.onOrders)
       listen(bookSource, TRADES_EVENT, handlers.onTrades)
       listen(instrumentsSource, INSTRUMENTS_EVENT, handlers.onInstruments)
 

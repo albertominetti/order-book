@@ -66,21 +66,64 @@ public class OrderService {
         return engineOf(orderId).cancel(orderId);
     }
 
-    /** Aggregated snapshot of one instrument. */
-    public MatchingEngine.BookSnapshot getBookSnapshot(String rawSymbol) {
-        return registry.engineOrThrow(rawSymbol).snapshot();
+    /**
+     * All orders of one instrument, newest first, capped at {@code limit}.
+     * <p>A well formed symbol with no engine yet returns an empty list, while a malformed
+     * symbol throws {@link IllegalArgumentException} (mapped to HTTP 400).</p>
+     */
+    public List<OrderView> getOrders(String rawSymbol, int limit) {
+        if (limit <= 0) {
+            throw new IllegalArgumentException("limit must be positive");
+        }
+        try {
+            String normalized = SymbolRules.normalize(rawSymbol);
+            if (!hasInstrument(normalized)) {
+                return List.of();
+            }
+            return registry.engineOrThrow(normalized).orders(limit);
+        } catch (IllegalArgumentException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new IllegalArgumentException("symbol is required and must be well formed");
+        }
     }
 
-    /** Recent trades of one instrument, newest first. */
+    /**
+     * Aggregated snapshot of one instrument.
+     * <p>Like {@link #getOrders(String, int)} a well formed symbol with no engine yet returns an
+     * empty book, while a malformed symbol throws {@link IllegalArgumentException} (HTTP 400):
+     * an instrument nobody has traded on is an empty state, not a missing resource.</p>
+     *
+     * @throws IllegalArgumentException when the symbol is missing or malformed (HTTP 400)
+     */
+    public MatchingEngine.BookSnapshot getBookSnapshot(String rawSymbol) {
+        String normalized = SymbolRules.normalize(rawSymbol);
+        if (!hasInstrument(normalized)) {
+            return new MatchingEngine.BookSnapshot(List.of(), List.of(), null, null, null, null);
+        }
+        return registry.engineOrThrow(normalized).snapshot();
+    }
+
+    /**
+     * Recent trades of one instrument, newest first.
+     * <p>Same rule as {@link #getBookSnapshot(String)}: a well formed symbol with no engine yet
+     * returns an empty tape, and only a malformed symbol is an error (HTTP 400).</p>
+     *
+     * @throws IllegalArgumentException when the symbol is missing or malformed (HTTP 400)
+     */
     public List<Trade> getRecentTrades(String rawSymbol, int limit) {
-        return registry.engineOrThrow(rawSymbol).recentTrades(limit);
+        String normalized = SymbolRules.normalize(rawSymbol);
+        if (!hasInstrument(normalized)) {
+            return List.of();
+        }
+        return registry.engineOrThrow(normalized).recentTrades(limit);
     }
 
     /**
      * Tells whether an instrument already exists, that is whether an order ever created its book.
      *
-     * <p>Unlike {@link #getBookSnapshot(String)} and {@link #getRecentTrades(String, int)} it never
-     * throws for a well formed symbol: the push channel uses it to tell "empty instrument" from
+     * <p>Like {@link #getBookSnapshot(String)} and {@link #getRecentTrades(String, int)} it never
+     * fails for a well formed symbol: the push channel uses it to tell "empty instrument" from
      * "malformed symbol", and only the latter is an error.</p>
      *
      * @throws IllegalArgumentException when the symbol is missing or malformed (HTTP 400)
