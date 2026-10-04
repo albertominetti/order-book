@@ -66,6 +66,28 @@ public class OrderService {
         return engineOf(orderId).cancel(orderId);
     }
 
+    /**
+     * All orders of one instrument, newest first, capped at {@code limit}.
+     * <p>A well formed symbol with no engine yet returns an empty list, while a malformed
+     * symbol throws {@link IllegalArgumentException} (mapped to HTTP 400).</p>
+     */
+    public List<OrderView> getOrders(String rawSymbol, int limit) {
+        if (limit <= 0) {
+            throw new IllegalArgumentException("limit must be positive");
+        }
+        try {
+            String normalized = SymbolRules.normalize(rawSymbol);
+            if (!hasInstrument(normalized)) {
+                return List.of();
+            }
+            return registry.engineOrThrow(normalized).orders(limit);
+        } catch (IllegalArgumentException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new IllegalArgumentException("symbol is required and must be well formed");
+        }
+    }
+
     /** Aggregated snapshot of one instrument. */
     public MatchingEngine.BookSnapshot getBookSnapshot(String rawSymbol) {
         return registry.engineOrThrow(rawSymbol).snapshot();

@@ -4,6 +4,7 @@ import {
   cancelOrder,
   describeError,
   getOrderBook,
+  getOrders,
   getRecentTrades,
   isUnknownInstrument,
   listInstruments,
@@ -13,7 +14,7 @@ import {
 import { usePoller } from './usePoller.js'
 import { useStream } from './useStream.js'
 import Instruments from './components/Instruments.vue'
-import MyOrders from './components/MyOrders.vue'
+import Orders from './components/Orders.vue'
 import OrderBook from './components/OrderBook.vue'
 import OrderForm from './components/OrderForm.vue'
 import Trades from './components/Trades.vue'
@@ -21,8 +22,7 @@ import InstrumentSelect from './components/InstrumentSelect.vue'
 
 const POLL_INTERVAL_MS = 1000
 const DEFAULT_SYMBOL = 'UBSG'
-const STORAGE_KEY = 'order-book.my-orders.v1'
-const MAX_STORED_ORDERS = 50
+const ORDERS_LIMIT = 50
 
 const symbol = ref(DEFAULT_SYMBOL)
 
@@ -36,7 +36,7 @@ const tradesError = ref('')
 const instruments = ref([])
 const instrumentsError = ref('')
 
-const orders = ref(loadOrders())
+const orders = ref([])
 const orderError = ref('')
 const cancelError = ref('')
 const submitting = ref(false)
@@ -46,28 +46,6 @@ const onlyActiveSymbol = ref(false)
 function normalizeSymbol(raw) {
   return String(raw || '').trim().toUpperCase()
 }
-
-function loadOrders() {
-  try {
-    const stored = window.localStorage.getItem(STORAGE_KEY)
-    const parsed = stored ? JSON.parse(stored) : []
-    return Array.isArray(parsed) ? parsed : []
-  } catch {
-    return []
-  }
-}
-
-function storeOrders(current) {
-  try {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(current.slice(0, MAX_STORED_ORDERS)))
-  } catch {
-    return
-  }
-}
-
-watch(orders, (current) => {
-  storeOrders(current)
-}, { deep: true })
 
 function selectSymbol(next) {
   const normalized = normalizeSymbol(next)
@@ -80,10 +58,12 @@ symbol.value = normalized
 watch(symbol, () => {
   book.value = null
   trades.value = []
+  orders.value = []
   bookError.value = ''
   tradesError.value = ''
   bookPoller.refresh()
   tradesPoller.refresh()
+  ordersPoller.refresh()
 })
 
 async function loadBook() {
@@ -109,6 +89,16 @@ async function loadTrades() {
   }
 }
 
+async function loadOrders() {
+  try {
+    orders.value = await getOrders(symbol.value, ORDERS_LIMIT)
+    orderError.value = ''
+  } catch (error) {
+    orders.value = []
+    orderError.value = describeError(error)
+  }
+}
+
 async function loadInstruments() {
   try {
     instruments.value = await listInstruments()
@@ -121,6 +111,7 @@ async function loadInstruments() {
 
 const bookPoller = usePoller(loadBook, POLL_INTERVAL_MS)
 const tradesPoller = usePoller(loadTrades, POLL_INTERVAL_MS)
+const ordersPoller = usePoller(loadOrders, POLL_INTERVAL_MS)
 const instrumentsPoller = usePoller(loadInstruments, POLL_INTERVAL_MS)
 
 /**
@@ -138,6 +129,13 @@ const { connected } = useStream(symbol, {
     book.value = payload
     bookError.value = ''
     bookLoading.value = false
+  },
+  onOrders: (payload) => {
+    if (!Array.isArray(payload)) {
+      return
+    }
+    orders.value = payload
+    orderError.value = ''
   },
   onTrades: (payload) => {
     if (!Array.isArray(payload)) {
@@ -163,18 +161,11 @@ const channelTitle = computed(() =>
     : 'No event stream, falling back to polling once per second'
 )
 
-function remember(order) {
-  const next = orders.value.filter((candidate) => candidate.id !== order.id)
-  next.unshift(order)
-  orders.value = next.slice(0, MAX_STORED_ORDERS)
-}
-
 async function onSubmit(order) {
   submitting.value = true
   orderError.value = ''
   try {
-    const result = await submitOrder(order)
-    remember(result.order)
+    await submitOrder(order)
     refreshAll()
   } catch (error) {
     orderError.value = describeError(error)
@@ -187,7 +178,7 @@ async function onCancel(order) {
   cancellingId.value = order.id
   cancelError.value = ''
   try {
-    remember(await cancelOrder(order.id))
+    await cancelOrder(order.id)
     refreshAll()
   } catch (error) {
     cancelError.value = describeError(error)
@@ -203,6 +194,7 @@ function toggleSymbolFilter() {
 function refreshAll() {
   bookPoller.refresh()
   tradesPoller.refresh()
+  ordersPoller.refresh()
   instrumentsPoller.refresh()
 }
 </script>
@@ -254,7 +246,7 @@ function refreshAll() {
           :error="bookError"
           :loading="bookLoading"
         />
-        <MyOrders
+        <Orders
           class="card"
           :orders="orders"
           :error="cancelError"

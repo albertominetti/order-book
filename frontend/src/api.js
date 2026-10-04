@@ -104,6 +104,11 @@ export function getOrderBook(symbol) {
   return request('/instruments/' + encodeURIComponent(symbol) + '/orderbook')
 }
 
+export function getOrders(symbol, limit = 50) {
+  const safeLimit = Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : 50
+  return request('/instruments/' + encodeURIComponent(symbol) + '/orders?limit=' + safeLimit)
+}
+
 export function getRecentTrades(symbol, limit = DEFAULT_TRADE_LIMIT) {
   const safeLimit = Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : DEFAULT_TRADE_LIMIT
   return request('/instruments/' + encodeURIComponent(symbol) + '/trades?limit=' + safeLimit)

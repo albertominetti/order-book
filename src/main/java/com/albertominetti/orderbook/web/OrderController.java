@@ -50,6 +50,12 @@ public class OrderController {
     /** Default number of trades returned by the per-instrument trade tape. */
     static final int DEFAULT_TRADE_LIMIT = 50;
 
+    /** Default number of orders returned by the per-instrument orders list. */
+    static final int DEFAULT_ORDER_LIMIT = 50;
+
+    /** Largest number of orders returned by the per-instrument orders list. */
+    static final int MAX_ORDER_LIMIT = 200;
+
     /** Default number of instruments returned by the catalogue search. */
     static final int DEFAULT_INSTRUMENT_SEARCH_LIMIT = 50;
 
@@ -151,6 +157,28 @@ public class OrderController {
     }
 
     /**
+     * All orders of one instrument, newest first, including filled and cancelled ones.
+     *
+     * @param limit how many orders to return (1..{@value #MAX_ORDER_LIMIT})
+     * @throws IllegalArgumentException when the symbol is missing or malformed (400)
+     */
+    @GetMapping("/instruments/{symbol}/orders")
+    public List<OrderResponse> getOrders(
+            @PathVariable
+            @Pattern(regexp = SymbolRules.RAW_PATTERN_SOURCE,
+                    message = "symbol must match " + SymbolRules.PATTERN_SOURCE)
+            @NotBlank(message = "symbol is required")
+            String symbol,
+            @RequestParam(defaultValue = "" + DEFAULT_ORDER_LIMIT)
+            @Min(value = 1, message = "limit must be at least 1")
+            @Max(value = MAX_ORDER_LIMIT, message = "limit must be at most " + MAX_ORDER_LIMIT)
+            int limit) {
+        return orderService.getOrders(symbol, limit).stream()
+                .map(OrderResponse::from)
+                .toList();
+    }
+
+    /**
      * Recent trades of one instrument, newest first.
      *
      * @param limit how many trades to return (1..{@value MatchingEngine#MAX_RECENT_TRADES})
@@ -184,6 +212,7 @@ public class OrderController {
         String symbol = SymbolRules.normalize(rawSymbol);
         publishBookOnly(symbol);
         broadcaster.publishTrades(symbol, trades);
+        broadcaster.publishOrders(symbol, ordersList(symbol));
     }
 
     /**
@@ -195,7 +224,14 @@ public class OrderController {
     private void publishBookOnly(String rawSymbol) {
         String symbol = SymbolRules.normalize(rawSymbol);
         broadcaster.publishBook(symbol, OrderBookResponse.from(orderService.getBookSnapshot(symbol)));
+        broadcaster.publishOrders(symbol, ordersList(symbol));
         broadcaster.publishInstruments(broadcaster.instrumentStats());
+    }
+
+    private List<OrderResponse> ordersList(String symbol) {
+        return orderService.getOrders(symbol, DEFAULT_ORDER_LIMIT).stream()
+                .map(OrderResponse::from)
+                .toList();
     }
 }
 

@@ -217,6 +217,37 @@ public class MatchingEngine {
         }
     }
 
+    /**
+     * Returns all orders ever accepted, ordered from newest to oldest.
+     * <p>The list is capped at {@code limit} entries and contains snapshots ({@link OrderView})
+     * taken while holding the engine lock. The state of the engine is never mutated.</p>
+     *
+     * @param limit maximum number of orders to return, must be positive
+     * @return snapshots of the most recent orders, newest first
+     */
+    public List<OrderView> orders(int limit) {
+        if (limit <= 0) {
+            throw new IllegalArgumentException("limit must be positive");
+        }
+        lock.lock();
+        try {
+            int size = ordersById.size();
+            int start = Math.max(0, size - limit);
+            List<OrderView> result = new ArrayList<>(limit);
+            int index = 0;
+            for (Order order : ordersById.values()) {
+                if (index >= start) {
+                    result.add(order.toView());
+                }
+                index++;
+            }
+            Collections.reverse(result);
+            return result;
+        } finally {
+            lock.unlock();
+        }
+    }
+
     /** Number of orders currently resting on the book. */
     public int restingOrderCount() {
         lock.lock();

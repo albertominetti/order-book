@@ -22,7 +22,7 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
  *
  * <p>Two streams are exposed:</p>
  * <ul>
- *   <li>{@code GET /api/instruments/{symbol}/stream} pushes {@code book} and {@code trades} events of
+ *   <li>{@code GET /api/instruments/{symbol}/stream} pushes {@code book}, {@code orders} and {@code trades} events of
  *       one instrument. It can be opened for <em>any</em> valid symbol: a symbol whose book does not
  *       exist yet streams an empty book, so a client never has to poll just to find out that the
  *       instrument is empty;</li>

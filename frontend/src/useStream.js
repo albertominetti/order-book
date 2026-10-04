@@ -2,6 +2,7 @@ import { onScopeDispose, ref, watch } from 'vue'
 
 const BOOK_EVENT = 'book'
 const TRADES_EVENT = 'trades'
+const ORDERS_EVENT = 'orders'
 const INSTRUMENTS_EVENT = 'instruments'
 
 const INSTRUMENTS_STREAM = '/api/instruments/stream'
@@ -31,8 +32,9 @@ const INSTRUMENTS_STREAM = '/api/instruments/stream'
  * @param {{
  *   onBook?: (book: object) => void,
  *   onTrades?: (trades: Array<object>) => void,
+ *   onOrders?: (orders: Array<object>) => void,
  *   onInstruments?: (instruments: Array<object>) => void
- * }} [handlers] callbacks for the three events
+ * }} [handlers] callbacks for the events
  * @returns {{ connected: import('vue').Ref<boolean>, connect: () => void, disconnect: () => void }}
  */
 export function useStream(symbol, handlers = {}) {
@@ -130,6 +132,7 @@ export function useStream(symbol, handlers = {}) {
       instrumentsSource = new EventSource(INSTRUMENTS_STREAM)
 
       listen(bookSource, BOOK_EVENT, handlers.onBook)
+      listen(bookSource, ORDERS_EVENT, handlers.onOrders)
       listen(bookSource, TRADES_EVENT, handlers.onTrades)
       listen(instrumentsSource, INSTRUMENTS_EVENT, handlers.onInstruments)
 
