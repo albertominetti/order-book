@@ -26,12 +26,14 @@ application lifetime.
 - Symbol normalization (trim + upper-case) and shape validation.
 - Validation and consistent error responses (`201`, `200`, `400`, `404`, `405`, `422`).
 - Thread-safe: every engine has its own lock, so instruments never block each other.
+- A Vue 3 web app at `/app/` that trades on the API from the browser.
 
 ## Tech stack
 
 - Java 25
 - Spring Boot 4.1.1 (Web, Validation)
 - springdoc-openapi 3.x (OpenAPI 3 + Swagger UI)
+- Vue 3 + Vite (single page frontend under `frontend/`)
 - Maven
 - JUnit 5 + MockMvc
 
@@ -45,7 +47,8 @@ mvn test
 mvn spring-boot:run
 ```
 
-Then open <http://localhost:8080/swagger-ui.html>, or submit an order:
+Then open the web app at <http://localhost:8080/app/>, the documentation at
+<http://localhost:8080/swagger-ui.html>, or submit an order:
 
 ```bash
 curl -s -X POST http://localhost:8080/api/orders \
@@ -160,7 +163,8 @@ src/main/java/com/albertominetti/orderbook
 │   └── EngineConfiguration       Spring wiring of the Clock
 ├── web/
 │   ├── OrderController           REST endpoints
-│   ├── HomeController            landing page at /, links to the documentation
+│   ├── HomeController            landing page at /, links to the web app and the documentation
+│   ├── SpaController             forwards /app to the built Vue application
 │   └── GlobalExceptionHandler    maps exceptions to HTTP responses
 ├── dto/                          request/response records
 │   ├── CreateOrderRequest        order payload, symbol included
@@ -178,6 +182,24 @@ src/main/java/com/albertominetti/orderbook
     └── OrderStateException       order lifecycle broken     -> 422
 
 src/main/resources/application.yml   configuration (YAML)
+
+src/main/resources/templates/index.html   Thymeleaf landing page
+
+frontend/                            Vue 3 + Vite single page application (built by Maven)
+├── package.json                     npm scripts: dev, build, preview
+├── vite.config.js                   base /app/, output target/classes/static/app, /api dev proxy
+├── index.html                       entry document of the app
+└── src/
+    ├── main.js                      mounts the application
+    ├── App.vue                      layout, instrument selection, polling and order state
+    ├── api.js                       fetch wrapper over the relative /api paths, normalizes errors
+    ├── usePoller.js                 one request in flight per stream, stops with the component
+    └── components/
+        ├── OrderForm.vue            LIMIT/MARKET order entry
+        ├── OrderBook.vue            live book, best bid/ask, spread, last price
+        ├── Trades.vue               recent trades of the instrument
+        ├── Instruments.vue          active instruments, click to switch
+        └── MyOrders.vue             orders of this browser, with cancel
 
 src/test/java/com/albertominetti/orderbook
 ├── engine/MatchingEngineTest.java
@@ -246,6 +268,11 @@ platform and falls back to `8080` locally), the Jackson defaults, the springdoc 
 log levels. Jackson is configured with `default-property-inclusion: non_null`, so optional fields such
 as `price` on a MARKET order, or `bestAsk` on a one-sided book, are simply omitted from the JSON.
 
+The build toolchain has its own properties in `pom.xml`: `node.version` and `npm.version`, the Node
+and npm versions `frontend-maven-plugin` installs inside `frontend/`, plus
+`frontend-maven-plugin.version` itself. Bumping `node.version` is all it takes to move the frontend
+build to another Node LTS.
+
 ## API documentation
 
 springdoc-openapi is included, so an interactive API reference is generated at runtime:
@@ -254,8 +281,61 @@ springdoc-openapi is included, so an interactive API reference is generated at r
 - OpenAPI JSON: <http://localhost:8080/v3/api-docs>
 
 The root path <http://localhost:8080/> serves a small landing page (`HomeController`) that describes
-the service and links to Swagger UI and to the raw OpenAPI JSON, so opening the application in a
-browser is enough to find the documentation.
+the service, links to the web app at `/app/` and to Swagger UI and to the raw OpenAPI JSON, so
+opening the application in a browser is enough to find everything.
+
+## Frontend (Vue 3 + Vite)
+
+A single page application written with **Vue 3** and built by **Vite** drives the very same REST API
+from the browser. It is a standalone Vite project under [`frontend/`](frontend) and it is built by
+[Maven](pom.xml): `com.github.eirslett:frontend-maven-plugin` downloads its own Node and npm, runs
+`npm install` and then `vite build`.
+
+The bundle is written to `target/classes/static/app`, so it ends up **in the jar and in the GraalVM
+native image** and is served by Spring Boot as a static resource at <http://localhost:8080/app/>.
+`SpaController` forwards `/app` and `/app/` to `/app/index.html`, and the landing page at `/` links
+to it with a prominent "Open the web app (Vue 3)" entry.
+
+What it does:
+
+- switch instrument: `BTC-USD` and `ETH-USD` quick buttons, a free text field for any symbol, and
+  the active instruments of `GET /api/instruments`, clickable to switch;
+- submit orders, BUY or SELL, LIMIT or MARKET, through `POST /api/orders`, with the price required
+  only for a LIMIT order;
+- show the live book of the selected instrument from `GET /api/instruments/{symbol}/orderbook`, with
+  the best bid, the best ask, the spread and the last price;
+- show the last 20 trades from `GET /api/instruments/{symbol}/trades?limit=20`;
+- keep the orders submitted from the browser and cancel them with `DELETE /api/orders/{id}`;
+- poll every stream once per second, never with more than one request in flight per stream, and stop
+  polling when the page is left;
+- show an empty state per panel and the `code` and `message` of the uniform API error payload when a
+  call fails.
+
+All calls use relative `/api` paths, so the app always talks to the same origin that served it: no
+configuration and no CORS. The only external piece is Vue itself, which is bundled.
+
+Because the frontend build is bound to the `generate-resources` phase, `mvn test` builds it too, and
+a broken frontend fails the build:
+
+```bash
+mvn test
+```
+
+### Develop the frontend
+
+Maven installs Node and npm inside `frontend/`, but for an edit and reload loop the Vite dev server
+is faster, because it serves the sources with hot module replacement:
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+The dev server answers on <http://localhost:5173/app/> and proxies `/api` to
+<http://localhost:8080>, so the API has to run in another terminal (`mvn spring-boot:run`). Nothing
+of the dev server is packaged: `npm run build` writes the production bundle to the same
+`target/classes/static/app` directory that Maven uses.
 
 ## REST API
 
@@ -531,8 +611,13 @@ The suite is organized in three layers plus the landing page test:
 - `OrderApiIntegrationTest`: end-to-end MockMvc tests of every endpoint, including the `201` plus
   `Location` contract, symbol normalization, `GET`/`DELETE` on an order of any instrument, the per
   instrument book and trade tape, instrument listing, the full error matrix and instrument isolation.
-- `HomePageTest`: the landing page at `/` answers `200` with an HTML body linking to Swagger UI and
-  to the OpenAPI JSON.
+- `HomePageTest`: the landing page at `/` answers `200` with an HTML body linking to the web app at
+  `/app/`, to Swagger UI and to the OpenAPI JSON.
+- `SpaRoutingTest`: `/app` and `/app/` forward to `/app/index.html`, and the entry document built by
+  Maven from `frontend/` is really served, so the bundle is packaged.
+
+The frontend build runs in the `generate-resources` phase, therefore every `mvn test` also runs
+`npm install` and `vite build` before the Java tests.
 
 ## License
 
