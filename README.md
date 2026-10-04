@@ -16,6 +16,13 @@ application lifetime. Separately from that runtime state, a static catalogue of 
 is loaded at startup and served as a search endpoint, which is what the instrument picker of the web
 app queries.
 
+## Live environments
+
+- **Production:** https://albertos-order-book.onrender.com (free plan, sleeps when idle). It runs the prebuilt GraalVM native image published to GHCR by the CI.
+- **Preview:** https://albertos-order-book-preview.onrender.com (free plan). Built from the `preview` branch on every push, so changes can be tested there before they reach `main`.
+
+Useful paths on both: `/api/instruments`, and the API documentation at `/swagger-ui.html` (OpenAPI JSON at `/v3/api-docs`).
+
 ## Features
 
 - MULTIPLE instruments, one independent book each, keyed by `symbol`.

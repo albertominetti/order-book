@@ -18,12 +18,16 @@ import java.util.Locale;
 /**
  * Read-only catalogue of the tradable instruments offered by the search endpoint.
  *
- * <p>The catalogue is static reference data loaded once at startup from
- * {@code classpath:instruments.tsv}, a tab separated file whose first line is the header
- * {@code # symbol<TAB>name<TAB>market} and whose remaining lines are one instrument each
- * (Swiss SIX names followed by the S&amp;P 500 constituents). Listing an instrument here does not
- * create its book: an instrument still only exists in the {@link MarketRegistry} once an order has
- * been submitted for it.</p>
+ * <p>The catalogue is static reference data, loaded once at startup from
+ * {@code classpath:instruments.csv}. The file is an RFC 4180 CSV whose header is
+ * {@code symbol,name,market} and whose remaining lines are one instrument each (Swiss SIX names
+ * followed by the S&amp;P 500 constituents). Names may contain commas, so they are quoted.
+ * Listing an instrument here does not create its book: an instrument still only exists in the
+ * {@link MarketRegistry} once an order has been submitted for it.</p>
+ *
+ * <p>Because the file is read from the classpath, it is declared as a native image resource (a
+ * {@code resource-config.json} under {@code META-INF/native-image} and the {@code
+ * OrderBookRuntimeHints} registrar), otherwise the GraalVM build would not bundle it.</p>
  *
  * <p>{@link #search(String, int)} ranks the instruments whose <em>symbol starts with</em> the query
  * first and the instruments whose <em>name contains</em> the query after them, sorted by symbol
@@ -34,20 +38,14 @@ import java.util.Locale;
 @Service
 public class InstrumentCatalog {
 
-    /** Classpath location of the tab separated catalogue, as documented in the javadoc. */
-    static final String RESOURCE = "classpath:instruments.tsv";
+    /** Classpath location of the CSV catalogue. */
+    static final String RESOURCE = "classpath:instruments.csv";
 
     /** Path of the catalogue inside the classpath. */
     static final String RESOURCE_PATH = RESOURCE.substring("classpath:".length());
 
-    /** Field separator of the catalogue file. */
-    static final char FIELD_SEPARATOR = '\t';
-
-    /** Prefix of the header line and of any comment line. */
-    static final String COMMENT_PREFIX = "#";
-
-    /** Number of fields of a valid line: symbol, name and market. */
-    static final int FIELD_COUNT = 3;
+    /** Header of the CSV file, skipped while loading. */
+    static final String HEADER = "symbol,name,market";
 
     /** Instruments sorted by symbol, used to order the matches of a single rank. */
     private static final Comparator<InstrumentRef> BY_SYMBOL =
@@ -131,7 +129,7 @@ public class InstrumentCatalog {
     }
 
     /**
-     * Parses the tab separated catalogue, skipping the header and every unusable line.
+     * Parses the CSV catalogue, skipping the header line, the blank lines and the unusable lines.
      *
      * @return the instruments, in file order
      */
@@ -139,17 +137,57 @@ public class InstrumentCatalog {
         List<InstrumentRef> parsed = new ArrayList<>();
         String line;
         while ((line = reader.readLine()) != null) {
-            String trimmedLine = line.trim();
-            if (trimmedLine.isEmpty() || trimmedLine.startsWith(COMMENT_PREFIX)) {
+            if (line.isBlank()) {
                 continue;
             }
-            String[] fields = line.split(String.valueOf(FIELD_SEPARATOR), -1);
-            if (fields.length < FIELD_COUNT) {
+            List<String> fields = splitCsv(line);
+            String symbol = fields.get(0).trim();
+            if (HEADER.startsWith(symbol)) {
                 continue;
             }
-            parsed.add(new InstrumentRef(fields[0].trim(), fields[1].trim(), fields[2].trim()));
+            if (fields.size() < 3) {
+                continue;
+            }
+            parsed.add(new InstrumentRef(symbol, fields.get(1).trim(), fields.get(2).trim()));
         }
         return parsed;
+    }
+
+    /**
+     * Splits one CSV line into its fields, honouring the RFC 4180 quoting rules (fields wrapped in
+     * double quotes may contain commas, and a doubled quote stands for a single quote).
+     *
+     * @param line a single line without the trailing newline
+     * @return the fields of the line, at least one
+     */
+    static List<String> splitCsv(String line) {
+        List<String> fields = new ArrayList<>();
+        StringBuilder current = new StringBuilder();
+        boolean inQuotes = false;
+        for (int i = 0; i < line.length(); i++) {
+            char c = line.charAt(i);
+            if (inQuotes) {
+                if (c == '"') {
+                    if (i + 1 < line.length() && line.charAt(i + 1) == '"') {
+                        current.append('"');
+                        i++;
+                    } else {
+                        inQuotes = false;
+                    }
+                } else {
+                    current.append(c);
+                }
+            } else if (c == '"') {
+                inQuotes = true;
+            } else if (c == ',') {
+                fields.add(current.toString());
+                current.setLength(0);
+            } else {
+                current.append(c);
+            }
+        }
+        fields.add(current.toString());
+        return fields;
     }
 
     /** An instrument together with the lower-cased keys the search compares against. */

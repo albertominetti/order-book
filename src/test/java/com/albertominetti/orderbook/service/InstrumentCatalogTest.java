@@ -13,8 +13,8 @@ import java.util.List;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * Unit tests of the instrument catalogue: how the tab separated file is parsed, how a query is
- * ranked (symbol prefix first, name substring after) and how the limit is honoured.
+ * Unit tests of the instrument catalogue: how the CSV file is parsed, how a query is ranked
+ * (symbol prefix first, name substring after) and how the limit is honoured.
  */
 class InstrumentCatalogTest {
 
@@ -115,21 +115,21 @@ class InstrumentCatalogTest {
     // ------------------------------------------------------------------ loading
 
     @Test
-    @DisplayName("The parser skips the header line, the blank lines and the truncated lines")
-    void parserSkipsHeaderAndUnusableLines() throws IOException {
-        String tsv = """
-                # symbol\tname\tmarket
+    @DisplayName("The CSV parser skips the header, the blank and the truncated lines, and unquotes")
+    void parserSkipsHeaderBlankAndUnusableLines() throws IOException {
+        String csv = """
+                symbol,name,market
 
-                UBSG\tUBS Group\tSIX
+                UBSG,UBS Group,SIX
                 truncated
-                AAPL\tApple Inc.\tS&P 500\textra field ignored
+                AAPL,"Apple, Inc.",S&P 500,extra field ignored
                 """;
 
-        List<InstrumentRef> parsed = InstrumentCatalog.parse(new BufferedReader(new StringReader(tsv)));
+        List<InstrumentRef> parsed = InstrumentCatalog.parse(new BufferedReader(new StringReader(csv)));
 
         assertThat(parsed).containsExactly(
                 new InstrumentRef("UBSG", "UBS Group", "SIX"),
-                new InstrumentRef("AAPL", "Apple Inc.", "S&P 500"));
+                new InstrumentRef("AAPL", "Apple, Inc.", "S&P 500"));
     }
 
     @Test
@@ -149,6 +149,10 @@ class InstrumentCatalogTest {
         assertThat(shipped.search("ubsg", 5)).containsExactly(new InstrumentRef("UBSG", "UBS Group", "SIX"));
         assertThat(shipped.search("roche", 5)).containsExactly(new InstrumentRef("ROG", "Roche Holding", "SIX"));
         assertThat(shipped.search("nvda", 5)).containsExactly(new InstrumentRef("NVDA", "Nvidia", "S&P 500"));
+
+        // A name that contains a comma survives the CSV round trip.
+        assertThat(shipped.search("nike", 5))
+                .containsExactly(new InstrumentRef("NKE", "Nike, Inc.", "S&P 500"));
     }
 
     private static List<String> symbols(List<InstrumentRef> instruments) {
