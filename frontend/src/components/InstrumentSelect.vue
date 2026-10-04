@@ -1,6 +1,11 @@
 <script setup>
-import { computed, ref, watch } from 'vue'
-import { INSTRUMENTS } from '../data/instruments.js'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { describeError, isAborted, searchInstruments, searchLimit } from '../api.js'
+
+const DEBOUNCE_MS = 200
+const CLOSE_DELAY_MS = 150
+
+const SYMBOL_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,19}$/
 
 const props = defineProps({
   modelValue: {
@@ -14,116 +19,212 @@ const emit = defineEmits(['update:modelValue'])
 const searchTerm = ref(props.modelValue)
 const isOpen = ref(false)
 const highlightedIndex = ref(-1)
+const results = ref([])
+const loading = ref(false)
+const errorMessage = ref('')
+const searched = ref(false)
 
-const normalizedSymbolPattern = /^[A-Za-z0-9][A-Za-z0-9._-]{0,19}$/
+let debounceTimer = 0
+let closeTimer = 0
+let inFlight = null
+let latestRequest = 0
 
 function normalizeSymbol(raw) {
   return String(raw || '').trim().toUpperCase()
 }
 
-const filteredInstruments = computed(() => {
-  const query = searchTerm.value.trim()
-  let results = []
+/** Drops the pending debounce and cancels the search that is still in flight. */
+function cancelPending() {
+  if (debounceTimer) {
+    window.clearTimeout(debounceTimer)
+    debounceTimer = 0
+  }
+  if (inFlight) {
+    inFlight.abort()
+    inFlight = null
+  }
+}
 
-  if (!query) {
-    results = INSTRUMENTS.slice(0, 50)
-  } else {
-    const normalizedQuery = query.toUpperCase()
-    const matches = []
+/**
+ * Asks the backend catalogue for the instruments matching the term.
+ *
+ * <p>Only one request is ever in flight: the previous one is aborted and every response whose id is
+ * not the latest is ignored, so a slow answer can never overwrite a newer one.</p>
+ */
+function runSearch(term) {
+  cancelPending()
 
-    for (let i = 0; i < INSTRUMENTS.length && matches.length < 50; i++) {
-      const instrument = INSTRUMENTS[i]
-      const symbolPrefixMatch = instrument.symbol.toUpperCase().startsWith(normalizedQuery)
-      const nameSubstringMatch = !symbolPrefixMatch && instrument.name.toUpperCase().includes(normalizedQuery)
-      if (symbolPrefixMatch || nameSubstringMatch) {
-        matches.push({ ...instrument, priority: symbolPrefixMatch ? 0 : 1 })
+  const requestId = latestRequest + 1
+  latestRequest = requestId
+  const controller = new AbortController()
+  inFlight = controller
+  loading.value = true
+  errorMessage.value = ''
+
+  searchInstruments(term, searchLimit, { signal: controller.signal })
+    .then((payload) => {
+      if (requestId !== latestRequest) {
+        return
       }
-    }
-
-    matches.sort((a, b) => {
-      if (a.priority !== b.priority) return a.priority - b.priority
-      if (a.symbol !== b.symbol) return a.symbol.localeCompare(b.symbol)
-      return a.name.localeCompare(b.name)
+      results.value = Array.isArray(payload) ? payload : []
+      searched.value = true
     })
+    .catch((error) => {
+      if (requestId !== latestRequest || isAborted(error)) {
+        return
+      }
+      results.value = []
+      searched.value = true
+      errorMessage.value = describeError(error)
+    })
+    .finally(() => {
+      if (requestId !== latestRequest) {
+        return
+      }
+      loading.value = false
+      if (inFlight === controller) {
+        inFlight = null
+      }
+    })
+}
 
-    results = matches
+function scheduleSearch() {
+  cancelPending()
+  const term = searchTerm.value
+  debounceTimer = window.setTimeout(() => {
+    debounceTimer = 0
+    runSearch(term)
+  }, DEBOUNCE_MS)
+}
+
+/** The rows to draw: the catalogue hits, plus a free form row for a typed ticker nobody lists. */
+const rows = computed(() => {
+  const typed = normalizeSymbol(searchTerm.value)
+  if (!typed || !SYMBOL_PATTERN.test(typed)) {
+    return results.value
   }
-
-  const normalizedQuery = query.trim().toUpperCase()
-  const isValidFreeForm = normalizedQuery && normalizedSymbolPattern.test(normalizedQuery)
-  const isInList = isValidFreeForm && results.some(item => item.symbol === normalizedQuery)
-
-  if (isValidFreeForm && !isInList) {
-    results = [{ symbol: normalizedQuery, name: 'Custom', market: 'Custom' }, ...results]
+  const known = results.value.some((instrument) => normalizeSymbol(instrument.symbol) === typed)
+  if (known) {
+    return results.value
   }
-
-  return results.slice(0, 50)
+  return [{ symbol: typed, name: 'Use ' + typed, market: 'free form', custom: true }, ...results.value]
 })
 
-function selectInstrument(symbol) {
-  const normalized = normalizeSymbol(symbol)
-  if (!normalized) return
+const statusMessage = computed(() => {
+  if (loading.value) {
+    return 'Searching the instrument catalogue...'
+  }
+  if (errorMessage.value) {
+    return errorMessage.value
+  }
+  if (rows.value.length === 0) {
+    return 'No instrument matches "' + searchTerm.value.trim() + '".'
+  }
+  return ''
+})
 
+function selectSymbol(symbol) {
+  const normalized = normalizeSymbol(symbol)
+  if (!normalized) {
+    return
+  }
+  cancelPending()
   searchTerm.value = normalized
   emit('update:modelValue', normalized)
   isOpen.value = false
   highlightedIndex.value = -1
 }
 
-function handleInput() {
+function handleInput(event) {
+  searchTerm.value = event.target.value
   isOpen.value = true
   highlightedIndex.value = -1
-  emit('update:modelValue', normalizeSymbol(searchTerm.value) || searchTerm.value)
+  scheduleSearch()
 }
 
 function handleFocus() {
+  if (closeTimer) {
+    window.clearTimeout(closeTimer)
+    closeTimer = 0
+  }
   isOpen.value = true
   highlightedIndex.value = -1
+  if (!searched.value) {
+    runSearch(searchTerm.value)
+  }
 }
 
 function handleBlur() {
-  setTimeout(() => {
+  closeTimer = window.setTimeout(() => {
+    closeTimer = 0
     isOpen.value = false
     highlightedIndex.value = -1
     searchTerm.value = props.modelValue
-  }, 200)
+    cancelPending()
+  }, CLOSE_DELAY_MS)
+}
+
+function moveHighlight(step) {
+  const size = rows.value.length
+  if (size === 0) {
+    return
+  }
+  const next = highlightedIndex.value + step
+  highlightedIndex.value = next < 0 ? size - 1 : next % size
 }
 
 function handleKeydown(event) {
-  if (!isOpen.value || filteredInstruments.value.length === 0) {
-    if (event.key === 'ArrowDown' || event.key === 'Enter') {
-      isOpen.value = true
+  if (event.key === 'ArrowDown') {
+    event.preventDefault()
+    if (!isOpen.value) {
+      handleFocus()
     }
+    moveHighlight(1)
     return
   }
 
-  if (event.key === 'ArrowDown') {
+  if (event.key === 'ArrowUp') {
     event.preventDefault()
-    highlightedIndex.value = (highlightedIndex.value + 1) % filteredInstruments.value.length
-  } else if (event.key === 'ArrowUp') {
-    event.preventDefault()
-    highlightedIndex.value = highlightedIndex.value <= 0
-      ? filteredInstruments.value.length - 1
-      : highlightedIndex.value - 1
-  } else if (event.key === 'Enter') {
-    event.preventDefault()
-    if (highlightedIndex.value >= 0 && highlightedIndex.value < filteredInstruments.value.length) {
-      selectInstrument(filteredInstruments.value[highlightedIndex.value].symbol)
-    } else {
-      selectInstrument(searchTerm.value)
+    if (!isOpen.value) {
+      handleFocus()
     }
-  } else if (event.key === 'Escape') {
+    moveHighlight(-1)
+    return
+  }
+
+  if (event.key === 'Enter') {
+    event.preventDefault()
+    const highlighted = rows.value[highlightedIndex.value]
+    selectSymbol(highlighted ? highlighted.symbol : searchTerm.value)
+    return
+  }
+
+  if (event.key === 'Escape') {
     event.preventDefault()
     isOpen.value = false
     highlightedIndex.value = -1
     searchTerm.value = props.modelValue
+    cancelPending()
   }
 }
 
-watch(() => props.modelValue, (newValue) => {
-  if (normalizeSymbol(newValue) !== normalizeSymbol(searchTerm.value)) {
-    searchTerm.value = newValue
+watch(() => props.modelValue, (value) => {
+  if (normalizeSymbol(value) !== normalizeSymbol(searchTerm.value)) {
+    searchTerm.value = value
   }
+})
+
+watch(rows, (list) => {
+  if (highlightedIndex.value >= list.length) {
+    highlightedIndex.value = list.length - 1
+  }
+})
+
+onBeforeUnmount(() => {
+  if (closeTimer) {
+    window.clearTimeout(closeTimer)
+  }
+  cancelPending()
 })
 </script>
 
@@ -132,24 +233,41 @@ watch(() => props.modelValue, (newValue) => {
     <label class="symbol-field">
       <span>Instrument</span>
       <input
-        v-model="searchTerm"
+        :value="searchTerm"
         type="text"
-        maxlength="20"
+        maxlength="40"
         spellcheck="false"
         autocomplete="off"
+        role="combobox"
+        aria-autocomplete="list"
+        :aria-expanded="isOpen"
+        aria-controls="instrument-search-results"
         @input="handleInput"
         @focus="handleFocus"
         @blur="handleBlur"
         @keydown="handleKeydown"
       >
     </label>
-    <div v-if="isOpen && filteredInstruments.length > 0" class="dropdown">
+
+    <div
+      v-if="isOpen"
+      id="instrument-search-results"
+      class="dropdown"
+      role="listbox"
+      aria-live="polite"
+    >
+      <p v-if="statusMessage" class="status" :class="{ error: errorMessage }">
+        {{ statusMessage }}
+      </p>
+
       <div
-        v-for="(instrument, index) in filteredInstruments"
+        v-for="(instrument, index) in rows"
         :key="instrument.symbol + '-' + index"
         class="dropdown-item"
         :class="{ highlighted: index === highlightedIndex }"
-        @mousedown.prevent="selectInstrument(instrument.symbol)"
+        role="option"
+        :aria-selected="index === highlightedIndex"
+        @mousedown.prevent="selectSymbol(instrument.symbol)"
         @mouseenter="highlightedIndex = index"
       >
         <span class="symbol">{{ instrument.symbol }}</span>
@@ -179,6 +297,7 @@ watch(() => props.modelValue, (newValue) => {
 
 .symbol-field input {
   width: 12rem;
+  max-width: 100%;
   padding: 0.35rem 0.5rem;
   border: 1px solid var(--border);
   border-radius: 0.35rem;
@@ -200,7 +319,20 @@ watch(() => props.modelValue, (newValue) => {
   border-radius: 0.35rem;
   max-height: 20rem;
   overflow-y: auto;
+  overscroll-behavior: contain;
   box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+}
+
+.status {
+  margin: 0;
+  padding: 0.45rem 0.5rem;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border);
+}
+
+.status.error {
+  color: var(--danger);
 }
 
 .dropdown-item {
@@ -239,5 +371,17 @@ watch(() => props.modelValue, (newValue) => {
   font-size: 0.7rem;
   color: var(--text-muted);
   text-transform: uppercase;
+}
+
+@media (max-width: 600px) {
+  .symbol-field,
+  .symbol-field input {
+    width: 100%;
+  }
+
+  .dropdown {
+    right: auto;
+    width: min(22rem, calc(100vw - 2.5rem));
+  }
 }
 </style>

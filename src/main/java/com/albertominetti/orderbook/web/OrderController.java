@@ -1,5 +1,6 @@
 package com.albertominetti.orderbook.web;
 
+import com.albertominetti.orderbook.domain.InstrumentRef;
 import com.albertominetti.orderbook.domain.SymbolRules;
 import com.albertominetti.orderbook.dto.CreateOrderRequest;
 import com.albertominetti.orderbook.dto.InstrumentStatsResponse;
@@ -11,6 +12,7 @@ import com.albertominetti.orderbook.engine.MatchingEngine;
 import com.albertominetti.orderbook.exception.OrderNotFoundException;
 import com.albertominetti.orderbook.exception.OrderStateException;
 import com.albertominetti.orderbook.exception.UnknownInstrumentException;
+import com.albertominetti.orderbook.service.InstrumentCatalog;
 import com.albertominetti.orderbook.service.OrderService;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Max;
@@ -47,10 +49,18 @@ public class OrderController {
     /** Default number of trades returned by the per-instrument trade tape. */
     static final int DEFAULT_TRADE_LIMIT = 50;
 
-    private final OrderService orderService;
+    /** Default number of instruments returned by the catalogue search. */
+    static final int DEFAULT_INSTRUMENT_SEARCH_LIMIT = 50;
 
-    public OrderController(OrderService orderService) {
+    /** Largest number of instruments a single catalogue search can return. */
+    static final int MAX_INSTRUMENT_SEARCH_LIMIT = 200;
+
+    private final OrderService orderService;
+    private final InstrumentCatalog instrumentCatalog;
+
+    public OrderController(OrderService orderService, InstrumentCatalog instrumentCatalog) {
         this.orderService = orderService;
+        this.instrumentCatalog = instrumentCatalog;
     }
 
     /**
@@ -95,6 +105,28 @@ public class OrderController {
         return orderService.listInstruments().stream()
                 .map(InstrumentStatsResponse::from)
                 .toList();
+    }
+
+    /**
+     * Searches the instrument catalogue of tradable symbols, the same source the UI dropdown uses.
+     *
+     * <p>Instruments whose symbol starts with {@code q} come first, then the instruments whose name
+     * contains it, each group sorted by symbol. A blank query returns the head of the catalogue, so
+     * the picker can open on something useful. This endpoint never creates a book: it only suggests
+     * symbols, and {@code POST /api/orders} is still the only way to bring an instrument to life.</p>
+     *
+     * @param query free text to match, defaults to blank
+     * @param limit how many instruments to return (1..{@value #MAX_INSTRUMENT_SEARCH_LIMIT})
+     */
+    @GetMapping("/instruments/search")
+    public List<InstrumentRef> searchInstruments(
+            @RequestParam(name = "q", defaultValue = "") String query,
+            @RequestParam(defaultValue = "" + DEFAULT_INSTRUMENT_SEARCH_LIMIT)
+            @Min(value = 1, message = "limit must be at least 1")
+            @Max(value = MAX_INSTRUMENT_SEARCH_LIMIT,
+                    message = "limit must be at most " + MAX_INSTRUMENT_SEARCH_LIMIT)
+            int limit) {
+        return instrumentCatalog.search(query, limit);
     }
 
     /**
