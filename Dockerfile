@@ -1,6 +1,6 @@
 # Multi-stage Docker build for the order-book Spring Boot REST API.
 #
-# Stage 1 "build"   : Maven compiles the sources and produces the executable jar.
+# Stage 1 "build"   : Maven compiles the sources (including the Vue frontend) and produces the jar.
 # Stage 2 "runtime" : a slim JRE-only image that runs that jar as a non-root user.
 #                     The final image carries no Maven, no sources and no build cache.
 
@@ -16,7 +16,11 @@ WORKDIR /build
 COPY pom.xml ./
 RUN mvn -B -q -DskipTests dependency:go-offline
 
+# The Java sources AND the frontend sources are needed: the frontend-maven-plugin builds the
+# Vue SPA into target/classes/static/app during the Maven package phase, so `frontend/` must be
+# present or `npm install` fails.
 COPY src ./src
+COPY frontend ./frontend
 RUN mvn -B -DskipTests package
 
 # ---------------------------------------------------------------------------
