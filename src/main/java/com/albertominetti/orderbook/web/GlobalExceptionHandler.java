@@ -4,6 +4,7 @@ import com.albertominetti.orderbook.dto.ApiErrorResponse;
 import com.albertominetti.orderbook.exception.InvalidOrderException;
 import com.albertominetti.orderbook.exception.OrderNotFoundException;
 import com.albertominetti.orderbook.exception.OrderStateException;
+import com.albertominetti.orderbook.exception.UnknownInstrumentException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.ConstraintViolation;
 import jakarta.validation.ConstraintViolationException;
@@ -18,6 +19,7 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.HandlerMethodValidationException;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.servlet.NoHandlerFoundException;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 import java.time.Instant;
 import java.util.Comparator;
@@ -28,11 +30,16 @@ import java.util.List;
  *
  * <p>Status mapping:</p>
  * <ul>
- *   <li>400 - malformed JSON, unknown enum value, invalid field or failed business rule</li>
- *   <li>404 - unknown order id or unknown path</li>
+ *   <li>400 - malformed JSON, unknown enum value, invalid field (including a malformed symbol)
+ *       or failed business rule</li>
+ *   <li>404 - unknown order id, unknown instrument or unknown path</li>
  *   <li>405 - unsupported HTTP method on a known path</li>
  *   <li>422 - well-formed request that breaks an order lifecycle rule</li>
  * </ul>
+ *
+ * <p>Stable codes: {@code VALIDATION_ERROR}, {@code MALFORMED_JSON}, {@code INVALID_PARAMETER},
+ * {@code INVALID_ORDER} (400), {@code NOT_FOUND}, {@code UNKNOWN_INSTRUMENT} (404),
+ * {@code METHOD_NOT_ALLOWED} (405) and {@code INVALID_ORDER_STATE} (422).</p>
  */
 @RestControllerAdvice
 public class GlobalExceptionHandler {
@@ -59,7 +66,7 @@ public class GlobalExceptionHandler {
         List<ApiErrorResponse.Violation> violations = ex instanceof ConstraintViolationException cve
                 ? cve.getConstraintViolations().stream()
                         .map(violation -> new ApiErrorResponse.Violation(
-                                String.valueOf(violation.getPropertyPath()), violation.getMessage()))
+                                fieldName(String.valueOf(violation.getPropertyPath())), violation.getMessage()))
                         .toList()
                 : violationsOf((HandlerMethodValidationException) ex);
         String message = violations.isEmpty() ? "invalid request parameter"
@@ -95,6 +102,20 @@ public class GlobalExceptionHandler {
         return build(HttpStatus.NOT_FOUND, "NOT_FOUND", ex.getMessage(), request, List.of());
     }
 
+    /** Unmapped path handled by the static resource resolver. */
+    @ExceptionHandler(NoResourceFoundException.class)
+    public ResponseEntity<ApiErrorResponse> handleNoResource(NoResourceFoundException ex,
+                                                            HttpServletRequest request) {
+        return build(HttpStatus.NOT_FOUND, "NOT_FOUND", ex.getMessage(), request, List.of());
+    }
+
+    /** A well formed symbol that has no book yet: the instrument does not exist. */
+    @ExceptionHandler(UnknownInstrumentException.class)
+    public ResponseEntity<ApiErrorResponse> handleUnknownInstrument(UnknownInstrumentException ex,
+                                                                     HttpServletRequest request) {
+        return build(HttpStatus.NOT_FOUND, "UNKNOWN_INSTRUMENT", ex.getMessage(), request, List.of());
+    }
+
     /** Valid request that breaks the order lifecycle, for example cancelling a filled order. */
     @ExceptionHandler(OrderStateException.class)
     public ResponseEntity<ApiErrorResponse> handleOrderState(OrderStateException ex,
@@ -116,11 +137,18 @@ public class GlobalExceptionHandler {
     }
 
     private List<ApiErrorResponse.Violation> violationsOf(HandlerMethodValidationException ex) {
-        return ex.getAllValidationResults().stream()
+        return ex.getParameterValidationResults().stream()
                 .flatMap(result -> result.getResolvableErrors().stream()
-                        .map(error -> new ApiErrorResponse.Violation(result.getMethodParameter().getParameterName(),
+                        .map(error -> new ApiErrorResponse.Violation(
+                                fieldName(result.getMethodParameter().getParameterName()),
                                 error.getDefaultMessage())))
                 .toList();
+    }
+
+    /** Keeps only the last segment of a dotted name, so {@code getOrderBook.symbol} reads {@code symbol}. */
+    private static String fieldName(String name) {
+        int lastDot = name.lastIndexOf('.');
+        return lastDot >= 0 ? name.substring(lastDot + 1) : name;
     }
 
     private ResponseEntity<ApiErrorResponse> build(HttpStatus status, String code, String message,

@@ -3,11 +3,10 @@ spring:
   application:
     name: order-book
   jackson:
-    # Keep the JSON payload stable and readable
+    # Keep the JSON payload stable and readable: null fields are omitted.
+    # Jackson 3 (the Boot 4 default) already writes dates and times as
+    # ISO-8601 strings, so WRITE_DATES_AS_TIMESTAMPS needs no configuration.
     default-property-inclusion: non_null
-    serialization:
-      write-dates-as-timestamps: false
-      fail-on-empty-beans: false
   mvc:
     # Log only the mapped requests, not the resolved resources
     log-resolved-exception: false

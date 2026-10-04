@@ -6,15 +6,20 @@ import java.util.Objects;
 import java.util.UUID;
 
 /**
- * A single order resting on (or matching against) the book.
+ * A single order resting on (or matching against) the book of one instrument.
  *
  * <p>Instances are <em>mutable</em>: {@code remainingQuantity} and {@code status}
  * are updated by the matching engine while it holds its lock, so all reads and
  * writes must happen under that lock.</p>
+ *
+ * <p>{@code symbol} is the instrument this order belongs to. It is immutable and is set by the
+ * {@link com.albertominetti.orderbook.engine.MatchingEngine} that owns the order, so an order can
+ * only ever trade against other orders of the same instrument.</p>
  */
 public class Order {
 
     private final UUID id;
+    private final String symbol;
     private final Side side;
     private final OrderType type;
     private final BigDecimal price;
@@ -24,20 +29,14 @@ public class Order {
     private BigDecimal remainingQuantity;
     private OrderStatus status;
 
-    public Order(Side side, OrderType type, BigDecimal price, BigDecimal quantity, Instant timestamp) {
-        this.id = UUID.randomUUID();
-        this.side = Objects.requireNonNull(side, "side must not be null");
-        this.type = Objects.requireNonNull(type, "type must not be null");
-        this.price = price;
-        this.quantity = Objects.requireNonNull(quantity, "quantity must not be null");
-        this.remainingQuantity = quantity;
-        this.status = OrderStatus.NEW;
-        this.timestamp = Objects.requireNonNull(timestamp, "timestamp must not be null");
+    public Order(String symbol, Side side, OrderType type, BigDecimal price, BigDecimal quantity, Instant timestamp) {
+        this(UUID.randomUUID(), symbol, side, type, price, quantity, timestamp);
     }
 
     /** Visible for testing: allows the caller to inject a fixed id. */
-    Order(UUID id, Side side, OrderType type, BigDecimal price, BigDecimal quantity, Instant timestamp) {
+    Order(UUID id, String symbol, Side side, OrderType type, BigDecimal price, BigDecimal quantity, Instant timestamp) {
         this.id = Objects.requireNonNull(id, "id must not be null");
+        this.symbol = Objects.requireNonNull(symbol, "symbol must not be null");
         this.side = Objects.requireNonNull(side, "side must not be null");
         this.type = Objects.requireNonNull(type, "type must not be null");
         this.price = price;
@@ -49,6 +48,11 @@ public class Order {
 
     public UUID getId() {
         return id;
+    }
+
+    /** Normalized instrument symbol, for example {@code BTC-USD}. */
+    public String getSymbol() {
+        return symbol;
     }
 
     public Side getSide() {
@@ -116,12 +120,12 @@ public class Order {
 
     /** Takes an immutable copy; must be called while the matching engine lock is held. */
     public OrderView toView() {
-        return new OrderView(id, side, type, price, quantity, remainingQuantity, status, timestamp);
+        return new OrderView(id, symbol, side, type, price, quantity, remainingQuantity, status, timestamp);
     }
 
     @Override
     public String toString() {
-        return "Order{id=" + id + ", side=" + side + ", type=" + type + ", price=" + price
+        return "Order{id=" + id + ", symbol=" + symbol + ", side=" + side + ", type=" + type + ", price=" + price
                 + ", quantity=" + quantity + ", remainingQuantity=" + remainingQuantity
                 + ", status=" + status + '}';
     }

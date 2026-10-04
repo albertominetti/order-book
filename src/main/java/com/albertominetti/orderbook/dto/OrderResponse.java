@@ -13,6 +13,7 @@ import java.util.UUID;
  * Public representation of an order.
  *
  * @param id                unique order id
+ * @param symbol            instrument the order belongs to
  * @param side              BUY or SELL
  * @param type              LIMIT or MARKET
  * @param price             limit price, {@code null} for MARKET orders
@@ -24,6 +25,7 @@ import java.util.UUID;
  */
 public record OrderResponse(
         UUID id,
+        String symbol,
         Side side,
         OrderType type,
         BigDecimal price,
@@ -37,6 +39,7 @@ public record OrderResponse(
     public static OrderResponse from(OrderView order) {
         return new OrderResponse(
                 order.id(),
+                order.symbol(),
                 order.side(),
                 order.type(),
                 order.price(),

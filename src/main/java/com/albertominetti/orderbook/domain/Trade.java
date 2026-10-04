@@ -12,6 +12,7 @@ import java.util.UUID;
  * improves the price of the level it consumes.</p>
  *
  * @param id           unique trade id
+ * @param symbol       instrument both orders belong to
  * @param buyOrderId   id of the buy order
  * @param sellOrderId  id of the sell order
  * @param price        execution price (resting order price)
@@ -20,6 +21,7 @@ import java.util.UUID;
  */
 public record Trade(
         UUID id,
+        String symbol,
         UUID buyOrderId,
         UUID sellOrderId,
         BigDecimal price,

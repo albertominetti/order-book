@@ -12,6 +12,7 @@ import java.util.UUID;
  * section, so callers can safely read it without any locking.</p>
  *
  * @param id                 unique order id
+ * @param symbol             instrument the order belongs to
  * @param side               BUY or SELL
  * @param type               LIMIT or MARKET
  * @param price              limit price, {@code null} for MARKET orders
@@ -22,6 +23,7 @@ import java.util.UUID;
  */
 public record OrderView(
         UUID id,
+        String symbol,
         Side side,
         OrderType type,
         BigDecimal price,

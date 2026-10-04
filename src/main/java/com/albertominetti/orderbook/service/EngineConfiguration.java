@@ -1,18 +1,21 @@
 package com.albertominetti.orderbook.service;
 
-import com.albertominetti.orderbook.engine.MatchingEngine;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
+import java.time.Clock;
+
 /**
- * Declares the single matching engine instance, shared by every request
- * for the lifetime of the application.
+ * Provides the single {@link Clock} used to stamp orders and trades.
+ *
+ * <p>The matching engines are no longer declared here: they are created per symbol, on demand,
+ * by the {@link MarketRegistry}.</p>
  */
 @Configuration
 public class EngineConfiguration {
 
     @Bean
-    public MatchingEngine matchingEngine() {
-        return new MatchingEngine();
+    public Clock clock() {
+        return Clock.systemUTC();
     }
 }

@@ -1,15 +1,22 @@
 package com.albertominetti.orderbook.web;
 
+import com.albertominetti.orderbook.domain.SymbolRules;
 import com.albertominetti.orderbook.dto.CreateOrderRequest;
+import com.albertominetti.orderbook.dto.InstrumentStatsResponse;
 import com.albertominetti.orderbook.dto.MatchResponse;
 import com.albertominetti.orderbook.dto.OrderBookResponse;
 import com.albertominetti.orderbook.dto.OrderResponse;
 import com.albertominetti.orderbook.dto.TradeResponse;
 import com.albertominetti.orderbook.engine.MatchingEngine;
+import com.albertominetti.orderbook.exception.OrderNotFoundException;
+import com.albertominetti.orderbook.exception.OrderStateException;
+import com.albertominetti.orderbook.exception.UnknownInstrumentException;
 import com.albertominetti.orderbook.service.OrderService;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Pattern;
 import org.springframework.http.ResponseEntity;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -28,13 +35,16 @@ import java.util.UUID;
 
 /**
  * REST API of the order book. Every endpoint lives under {@code /api}.
+ *
+ * <p>Orders are routed by symbol, while order lookups are global: an order id is unique across the
+ * whole market, so {@code /api/orders/{id}} does not need the symbol.</p>
  */
 @RestController
 @RequestMapping("/api")
 @Validated
 public class OrderController {
 
-    /** Default number of trades returned by {@code GET /api/trades}. */
+    /** Default number of trades returned by the per-instrument trade tape. */
     static final int DEFAULT_TRADE_LIMIT = 50;
 
     private final OrderService orderService;
@@ -44,7 +54,8 @@ public class OrderController {
     }
 
     /**
-     * Submits an order and returns it in its final state plus the trades it generated.
+     * Submits an order on the instrument it names and returns it in its final state plus the
+     * trades it generated. The instrument is created on first use.
      *
      * @return 201 with a {@code Location} header pointing to the new order
      */
@@ -58,39 +69,66 @@ public class OrderController {
     }
 
     /**
-     * Cancels an order that is still resting on the book.
+     * Returns a single order of any instrument, including terminal (filled or cancelled) ones.
      *
-     * @return 200 with the cancelled order
+     * @throws OrderNotFoundException when the id is unknown (404)
+     */
+    @GetMapping("/orders/{id}")
+    public OrderResponse getOrder(@PathVariable UUID id) {
+        return OrderResponse.from(orderService.getOrder(id));
+    }
+
+    /**
+     * Cancels an order still resting on the book of its own instrument.
+     *
+     * @throws OrderNotFoundException when the id is unknown (404)
+     * @throws OrderStateException    when the order is not resting any more (422)
      */
     @DeleteMapping("/orders/{id}")
     public OrderResponse cancelOrder(@PathVariable UUID id) {
         return OrderResponse.from(orderService.cancelOrder(id));
     }
 
-    /** Returns a single order, including terminal (filled or cancelled) ones. */
-    @GetMapping("/orders/{id}")
-    public OrderResponse getOrder(@PathVariable UUID id) {
-        return OrderResponse.from(orderService.getOrder(id));
-    }
-
-    /** Aggregated book snapshot with best bid, best ask and spread. */
-    @GetMapping("/orderbook")
-    public OrderBookResponse getOrderBook() {
-        return OrderBookResponse.from(orderService.getBookSnapshot());
+    /** Every active instrument with its resting orders, best prices and last price. */
+    @GetMapping("/instruments")
+    public List<InstrumentStatsResponse> getInstruments() {
+        return orderService.listInstruments().stream()
+                .map(InstrumentStatsResponse::from)
+                .toList();
     }
 
     /**
-     * Most recent trades, newest first.
+     * Aggregated book snapshot of one instrument, with best bid, best ask and spread.
+     *
+     * @throws UnknownInstrumentException when nothing was ever traded on the symbol (404)
+     */
+    @GetMapping("/instruments/{symbol}/orderbook")
+    public OrderBookResponse getOrderBook(@PathVariable
+                                          @Pattern(regexp = SymbolRules.RAW_PATTERN_SOURCE,
+                                                  message = "symbol must match " + SymbolRules.PATTERN_SOURCE)
+                                          @NotBlank(message = "symbol is required")
+                                          String symbol) {
+        return OrderBookResponse.from(orderService.getBookSnapshot(symbol));
+    }
+
+    /**
+     * Recent trades of one instrument, newest first.
      *
      * @param limit how many trades to return (1..{@value MatchingEngine#MAX_RECENT_TRADES})
+     * @throws UnknownInstrumentException when nothing was ever traded on the symbol (404)
      */
-    @GetMapping("/trades")
+    @GetMapping("/instruments/{symbol}/trades")
     public List<TradeResponse> getTrades(
+            @PathVariable
+            @Pattern(regexp = SymbolRules.RAW_PATTERN_SOURCE,
+                    message = "symbol must match " + SymbolRules.PATTERN_SOURCE)
+            @NotBlank(message = "symbol is required")
+            String symbol,
             @RequestParam(defaultValue = "" + DEFAULT_TRADE_LIMIT)
             @Min(value = 1, message = "limit must be at least 1")
             @Max(value = MatchingEngine.MAX_RECENT_TRADES, message = "limit must be at most 1000")
             int limit) {
-        return orderService.getRecentTrades(limit).stream()
+        return orderService.getRecentTrades(symbol, limit).stream()
                 .map(TradeResponse::from)
                 .toList();
     }

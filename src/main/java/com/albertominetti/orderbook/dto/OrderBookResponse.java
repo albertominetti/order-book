@@ -6,7 +6,7 @@ import java.math.BigDecimal;
 import java.util.List;
 
 /**
- * Snapshot of the book returned by {@code GET /api/orderbook}.
+ * Snapshot of the book of one instrument, returned by {@code GET /api/instruments/{symbol}/orderbook}.
  *
  * @param bids      bid levels, best (highest) price first
  * @param asks      ask levels, best (lowest) price first

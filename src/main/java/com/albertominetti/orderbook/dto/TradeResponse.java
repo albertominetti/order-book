@@ -10,6 +10,7 @@ import java.util.UUID;
  * Public representation of a trade.
  *
  * @param id          unique trade id
+ * @param symbol      instrument both orders belong to
  * @param buyOrderId  id of the buy order
  * @param sellOrderId id of the sell order
  * @param price       execution price (resting order price)
@@ -18,6 +19,7 @@ import java.util.UUID;
  */
 public record TradeResponse(
         UUID id,
+        String symbol,
         UUID buyOrderId,
         UUID sellOrderId,
         BigDecimal price,
@@ -28,6 +30,7 @@ public record TradeResponse(
     public static TradeResponse from(Trade trade) {
         return new TradeResponse(
                 trade.id(),
+                trade.symbol(),
                 trade.buyOrderId(),
                 trade.sellOrderId(),
                 trade.price(),

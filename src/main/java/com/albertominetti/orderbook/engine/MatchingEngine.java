@@ -1,10 +1,12 @@
 package com.albertominetti.orderbook.engine;
 
+import com.albertominetti.orderbook.domain.InstrumentStats;
 import com.albertominetti.orderbook.domain.Order;
 import com.albertominetti.orderbook.domain.OrderType;
 import com.albertominetti.orderbook.domain.OrderView;
 import com.albertominetti.orderbook.domain.PriceLevel;
 import com.albertominetti.orderbook.domain.Side;
+import com.albertominetti.orderbook.domain.SymbolRules;
 import com.albertominetti.orderbook.domain.Trade;
 import com.albertominetti.orderbook.exception.OrderNotFoundException;
 import com.albertominetti.orderbook.exception.OrderStateException;
@@ -27,6 +29,11 @@ import java.util.concurrent.locks.ReentrantLock;
 /**
  * Single-instrument, in-memory order book with strict price-time priority.
  *
+ * <p>One engine owns exactly one symbol: every order it accepts and every trade it produces
+ * carries that symbol, and because the book state is private to the instance, orders of
+ * different instruments can never be matched against each other. The
+ * {@link com.albertominetti.orderbook.service.MarketRegistry} creates one engine per symbol.</p>
+ *
  * <p>Structure</p>
  * <ul>
  *   <li>two {@link TreeMap}s of price level to FIFO queue of orders, both iterated
@@ -37,7 +44,8 @@ import java.util.concurrent.locks.ReentrantLock;
  * </ul>
  *
  * <p>Concurrency: a single {@link ReentrantLock} guards all mutable state, so matching is
- * atomic and the book is never observed half-updated.</p>
+ * atomic and the book is never observed half-updated. The lock is per engine, therefore orders
+ * on different instruments are matched fully in parallel.</p>
  *
  * <p>Matching rules</p>
  * <ul>
@@ -52,7 +60,7 @@ import java.util.concurrent.locks.ReentrantLock;
  */
 public class MatchingEngine {
 
-    /** Maximum number of trades kept in memory for the {@code /api/trades} endpoint. */
+    /** Maximum number of trades kept in memory for the per-instrument trade tape. */
     public static final int MAX_RECENT_TRADES = 1_000;
 
     /** price level -> orders resting on it, oldest first (FIFO). */
@@ -61,16 +69,26 @@ public class MatchingEngine {
     private final Map<UUID, Order> ordersById = new LinkedHashMap<>();
     private final Deque<Trade> recentTrades = new ArrayDeque<>();
 
+    private final String symbol;
     private final ReentrantLock lock = new ReentrantLock();
     private final Clock clock;
 
-    public MatchingEngine() {
-        this(Clock.systemUTC());
+    /**
+     * @param symbol the instrument this book trades, normalized by {@link SymbolRules#normalize(String)}
+     */
+    public MatchingEngine(String symbol) {
+        this(symbol, Clock.systemUTC());
     }
 
     /** Visible for testing: allows a deterministic clock. */
-    public MatchingEngine(Clock clock) {
+    public MatchingEngine(String symbol, Clock clock) {
+        this.symbol = SymbolRules.normalize(symbol);
         this.clock = clock;
+    }
+
+    /** The instrument this book trades. */
+    public String symbol() {
+        return symbol;
     }
 
     // ------------------------------------------------------------------ commands
@@ -102,7 +120,7 @@ public class MatchingEngine {
 
         lock.lock();
         try {
-            Order order = new Order(side, type, price, quantity, Instant.now(clock));
+            Order order = new Order(symbol, side, type, price, quantity, Instant.now(clock));
             ordersById.put(order.getId(), order);
 
             List<Trade> trades = new ArrayList<>();
@@ -209,6 +227,21 @@ public class MatchingEngine {
         }
     }
 
+    /** Summary of this instrument, computed under a single lock acquisition. */
+    public InstrumentStats stats() {
+        lock.lock();
+        try {
+            return new InstrumentStats(
+                    symbol,
+                    countOrders(bids) + countOrders(asks),
+                    bestBid(),
+                    bestAsk(),
+                    recentTrades.isEmpty() ? null : recentTrades.peekLast().price());
+        } finally {
+            lock.unlock();
+        }
+    }
+
     // ------------------------------------------------------------------ internals
 
     /** Price-time priority matching loop. Assumes the lock is held. */
@@ -264,7 +297,7 @@ public class MatchingEngine {
     private Trade recordTrade(Order aggressor, Order resting, BigDecimal quantity) {
         UUID buyOrderId = aggressor.getSide() == Side.BUY ? aggressor.getId() : resting.getId();
         UUID sellOrderId = aggressor.getSide() == Side.SELL ? aggressor.getId() : resting.getId();
-        Trade trade = new Trade(UUID.randomUUID(), buyOrderId, sellOrderId, resting.getPrice(), quantity,
+        Trade trade = new Trade(UUID.randomUUID(), symbol, buyOrderId, sellOrderId, resting.getPrice(), quantity,
                 Instant.now(clock));
         recentTrades.addLast(trade);
         while (recentTrades.size() > MAX_RECENT_TRADES) {

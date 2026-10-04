@@ -1,5 +1,6 @@
 package com.albertominetti.orderbook.engine;
 
+import com.albertominetti.orderbook.domain.InstrumentStats;
 import com.albertominetti.orderbook.domain.OrderStatus;
 import com.albertominetti.orderbook.domain.OrderType;
 import com.albertominetti.orderbook.domain.OrderView;
@@ -41,7 +42,7 @@ class MatchingEngineTest {
 
     @BeforeEach
     void setUp() {
-        engine = new MatchingEngine(FIXED_CLOCK);
+        engine = new MatchingEngine("TEST", FIXED_CLOCK);
     }
 
     // ------------------------------------------------------------------ helpers
@@ -115,6 +116,58 @@ class MatchingEngineTest {
             assertThat(fetched.type()).isEqualTo(OrderType.LIMIT);
             assertThat(fetched.quantity()).isEqualByComparingTo("1");
             assertThat(fetched.timestamp()).isEqualTo(Instant.parse("2024-01-01T00:00:00Z"));
+        }
+    }
+
+    // ------------------------------------------------------------------ symbol
+
+    @Nested
+    @DisplayName("every order and trade carries the instrument symbol")
+    class Symbol {
+
+        @Test
+        void engineNormalizesItsOwnSymbol() {
+            assertThat(new MatchingEngine(" btc-usd ").symbol()).isEqualTo("BTC-USD");
+        }
+
+        @Test
+        void engineRejectsAMalformedSymbol() {
+            assertThatThrownBy(() -> new MatchingEngine("BT C"))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("symbol");
+        }
+
+        @Test
+        void restingAndFilledOrdersExposeTheSymbol() {
+            MatchResult resting = sell("100.00", "5");
+            MatchResult aggressor = buy("100.00", "5");
+
+            assertThat(resting.order().symbol()).isEqualTo("TEST");
+            assertThat(aggressor.order().symbol()).isEqualTo("TEST");
+            assertThat(engine.findOrder(resting.order().id()).symbol()).isEqualTo("TEST");
+            assertThat(aggressor.trades()).allSatisfy(trade -> assertThat(trade.symbol()).isEqualTo("TEST"));
+        }
+
+        @Test
+        void statsAreScopedToTheInstrument() {
+            sell("101.00", "2");
+
+            InstrumentStats stats = engine.stats();
+
+            assertThat(stats.symbol()).isEqualTo("TEST");
+            assertThat(stats.restingOrders()).isEqualTo(1);
+            assertThat(stats.bestBid()).isNull();
+            assertThat(stats.bestAsk()).isEqualByComparingTo("101.00");
+            assertThat(stats.lastPrice()).isNull();
+        }
+
+        @Test
+        void statsReportTheLastPriceOnceSomethingTraded() {
+            sell("100.00", "1");
+            buy("100.00", "1");
+
+            assertThat(engine.stats().lastPrice()).isEqualByComparingTo("100.00");
+            assertThat(engine.stats().restingOrders()).isZero();
         }
     }
 
