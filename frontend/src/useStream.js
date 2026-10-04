@@ -33,7 +33,8 @@ const INSTRUMENTS_STREAM = '/api/instruments/stream'
  *   onBook?: (book: object) => void,
  *   onTrades?: (trades: Array<object>) => void,
  *   onOrders?: (orders: Array<object>) => void,
- *   onInstruments?: (instruments: Array<object>) => void
+ *   onInstruments?: (instruments: Array<object>) => void,
+ *   onStateChange?: (connected: boolean) => void
  * }} [handlers] callbacks for the events
  * @returns {{ connected: import('vue').Ref<boolean>, connect: () => void, disconnect: () => void }}
  */
@@ -92,6 +93,7 @@ export function useStream(symbol, handlers = {}) {
   }
 
   function disconnect() {
+    const wasConnected = connected.value
     closeSource(bookSource)
     closeSource(instrumentsSource)
     bookSource = null
@@ -99,6 +101,13 @@ export function useStream(symbol, handlers = {}) {
     bookOpen = false
     instrumentsOpen = false
     connected.value = false
+    if (wasConnected && typeof handlers.onStateChange === 'function') {
+      try {
+        handlers.onStateChange(false)
+      } catch {
+        // ignore
+      }
+    }
   }
 
   /**
@@ -115,6 +124,13 @@ export function useStream(symbol, handlers = {}) {
   /** True once both streams are established, which is what makes the push channel usable. */
   function markConnected() {
     connected.value = bookOpen && instrumentsOpen
+    if (typeof handlers.onStateChange === 'function') {
+      try {
+        handlers.onStateChange(connected.value)
+      } catch {
+        // ignore
+      }
+    }
   }
 
   function connect() {

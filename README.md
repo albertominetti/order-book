@@ -357,14 +357,13 @@ What it does:
 - keep the orders submitted from the browser and cancel them with `DELETE /api/orders/{id}`, with a
   table that fits on a phone: below 600px each order becomes a card and the Cancel button gets its
   own full width row, above it the table sits in a horizontally scrollable container;
-- poll every stream once per second, never with more than one request in flight per stream, and stop
-  polling when the page is left;
-- receive the book, the trade tape and the instrument list over Server-Sent Events with the native
-  `EventSource`, and show a badge in the top bar saying which channel is live: `live · SSE` while the
-  stream is connected, `polling` when it is not. The per-symbol stream can be opened for any valid
-  symbol, so an instrument without a book streams an empty book straight away instead of failing, and
-  the 1 second polling stays the fallback the badge announces;
-- show an empty state per panel and the `code` and `message` of the uniform API error payload when a
+  - receive the book, the trade tape and the instrument list over Server-Sent Events with the native
+  `EventSource`. When the stream is connected, it is the single source of truth for the order book,
+  orders and trades and REST polling is stopped; when it disconnects, the app falls back to REST
+  polling. The badge in the top bar shows which channel is live: `live · SSE` while the stream is
+  connected, `polling fallback` when it is not. The per-symbol stream can be opened for any valid
+  symbol, so an instrument without a book streams an empty book straight away instead of failing;
+  - show an empty state per panel and the `code` and `message` of the uniform API error payload when a
   call fails.
 
 All calls use relative `/api` paths, so the app always talks to the same origin that served it: no
