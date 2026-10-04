@@ -34,6 +34,8 @@ Useful paths on both: `/api/instruments`, and the API documentation at `/swagger
 - List of active instruments with their stats.
 - Instrument catalogue search over the Swiss SIX names and the S&P 500 constituents.
 - Recent trades tape per instrument.
+- Server-Sent Events streams per instrument and for the instrument list, openable for **any** valid
+  symbol because an empty book is streamed until the first order.
 - Symbol normalization (trim + upper-case) and shape validation.
 - Validation and consistent error responses (`201`, `200`, `400`, `404`, `405`, `422`).
 - Thread-safe: every engine has its own lock, so instruments never block each other.
@@ -173,9 +175,11 @@ src/main/java/com/albertominetti/orderbook
 │   ├── MarketRegistry            one engine per symbol, created lazily
 │   ├── InstrumentCatalog         instrument catalogue loaded from instruments.tsv, searched by symbol or name
 │   ├── OrderService              application facade, routes every request by symbol
+│   ├── MarketBroadcaster         fan-out of the book, trade tape and instrument list to the SSE subscribers
 │   └── EngineConfiguration       Spring wiring of the Clock
 ├── web/
 │   ├── OrderController           REST endpoints
+│   ├── MarketStreamController    Server-Sent Events endpoints
 │   ├── HomeController            landing page at /, links to the web app and the documentation
 │   ├── SpaController             forwards /app to the built Vue application
 │   └── GlobalExceptionHandler    maps exceptions to HTTP responses
@@ -209,6 +213,7 @@ frontend/                            Vue 3 + Vite single page application (built
     ├── App.vue                      layout, instrument selection, polling and order state
     ├── api.js                       fetch wrapper over the relative /api paths, normalizes errors
     ├── usePoller.js                 one request in flight per stream, stops with the component
+    ├── useStream.js                 SSE streams (book, trades, instruments) and the connected flag
     └── components/
         ├── InstrumentSelect.vue     instrument picker, debounced search over the catalogue
         ├── OrderForm.vue            LIMIT/MARKET order entry
@@ -220,8 +225,10 @@ frontend/                            Vue 3 + Vite single page application (built
 src/test/java/com/albertominetti/orderbook
 ├── engine/MatchingEngineTest.java
 ├── service/MarketRegistryTest.java
+├── service/MarketBroadcasterTest.java
 ├── service/InstrumentCatalogTest.java
 ├── web/OrderApiIntegrationTest.java
+├── web/MarketStreamApiTest.java
 ├── web/MultiInstrumentApiTest.java
 ├── web/InstrumentSearchApiTest.java
 ├── web/HomePageTest.java
@@ -267,6 +274,16 @@ src/test/java/com/albertominetti/orderbook
   recent trades.
 - **Clock injection.** Engines take a `java.time.Clock` (a `Clock.systemUTC()` bean from
   `EngineConfiguration`), which lets tests produce deterministic timestamps.
+- **The push channel is more permissive than the query endpoints.** `MarketBroadcaster` fans out to
+  one set of `SseEmitter` per symbol plus one set for the instrument list, and it publishes the very
+  same response records the REST endpoints return, so both channels carry the same JSON. A stream can
+  be opened for any well formed symbol: `subscribeBook` registers the subscriber even when no order
+  has created the engine yet and pushes an empty book plus an empty trade tape, so a client that
+  selects a fresh instrument is never answered with an error that would send it back to polling.
+  `GET /api/instruments/{symbol}/orderbook` and `GET /api/instruments/{symbol}/trades` keep answering
+  `404 UNKNOWN_INSTRUMENT`, because a snapshot of a book that does not exist is a question with no
+  answer. Publishing is purely additive and never throws: a subscriber that cannot be written to is
+  dropped and completes, and cannot slow a matching engine down.
 
 ## How the matching works
 
@@ -342,6 +359,11 @@ What it does:
   own full width row, above it the table sits in a horizontally scrollable container;
 - poll every stream once per second, never with more than one request in flight per stream, and stop
   polling when the page is left;
+- receive the book, the trade tape and the instrument list over Server-Sent Events with the native
+  `EventSource`, and show a badge in the top bar saying which channel is live: `live · SSE` while the
+  stream is connected, `polling` when it is not. The per-symbol stream can be opened for any valid
+  symbol, so an instrument without a book streams an empty book straight away instead of failing, and
+  the 1 second polling stays the fallback the badge announces;
 - show an empty state per panel and the `code` and `message` of the uniform API error payload when a
   call fails.
 
@@ -384,6 +406,8 @@ Base path: `/api`. All payloads are JSON.
 | `GET`    | `/api/instruments/search?q=&limit=`         | `200`   | Search the instrument catalogue             |
 | `GET`    | `/api/instruments/{symbol}/orderbook`       | `200`   | Book snapshot of one instrument             |
 | `GET`    | `/api/instruments/{symbol}/trades?limit=`   | `200`   | Recent trades of one instrument             |
+| `GET`    | `/api/instruments/{symbol}/stream`          | `200`   | SSE stream of one instrument (see below)    |
+| `GET`    | `/api/instruments/stream`                   | `200`   | SSE stream of the instrument list           |
 
 ### POST /api/orders
 
@@ -595,6 +619,58 @@ curl -s 'http://localhost:8080/api/instruments/BTC-USD/trades?limit=20'
 A `limit` outside 1 to 1000 is rejected with `400 VALIDATION_ERROR`, a non numeric `limit` with
 `400 INVALID_PARAMETER`.
 
+## Server-Sent Events streams
+
+The push counterpart of the two query endpoints above, an addition and never a replacement: the same
+response records are pushed as events, so a client reuses one parser for both channels and simply
+falls back to polling if a stream cannot be opened.
+
+| Method | Path                              | Event            | Payload                          |
+|--------|-----------------------------------|------------------|----------------------------------|
+| `GET`  | `/api/instruments/{symbol}/stream` | `book`           | Same as `/orderbook`             |
+| `GET`  | `/api/instruments/{symbol}/stream` | `trades`         | Same as `/trades?limit=20`       |
+| `GET`  | `/api/instruments/stream`          | `instruments`    | Same as `/api/instruments`       |
+
+Both endpoints answer `200` with content type `text/event-stream` and keep the response open. On
+subscription the current state is pushed immediately, so a fresh subscriber is never blank, and a
+keep-alive comment is sent every 20 seconds so an idle connection survives proxies. Afterwards the
+book and the trade tape are pushed again after every submission and cancellation on that symbol, and
+the instrument list after every submission or cancellation anywhere.
+
+```bash
+curl -N http://localhost:8080/api/instruments/BTC-USD/stream
+```
+
+```
+event:book
+data:{"bids":[{"price":200.00,"quantity":7,"orderCount":2}],"asks":[{"price":200.50,"quantity":1,"orderCount":1}],"bestBid":200.00,"bestAsk":200.50,"spread":0.50}
+
+event:trades
+data:[{"id":"8a2b3c4d-5e6f-4a1b-8c9d-0e1f2a3b4c5d","symbol":"BTC-USD","buyOrderId":"1a2b3c4d-5e6f-4a1b-8c9d-0e1f2a3b4c5d","sellOrderId":"2b3c4d5e-6f7a-4b1c-9d0e-1f2a3b4c5d6e","price":200.50,"quantity":2,"timestamp":"2026-10-04T09:00:05Z"}]
+```
+
+### A stream is openable for any valid symbol
+
+`GET /api/instruments/{symbol}/stream` accepts **any** valid symbol, even one no order has reached
+yet, so the live channel is usable immediately on a fresh instrument (`UBSG`, for instance, before
+the first submission). Such a subscriber is registered like any other and receives an **empty book**
+plus an **empty trade tape** right away:
+
+```
+event:book
+data:{"bids":[],"asks":[]}
+
+event:trades
+data:[]
+```
+
+No bid, no ask, and no `bestBid`, `bestAsk`, `spread` or `lastPrice` either, since those fields are
+omitted when they do not exist. The real state arrives with the very first order on that symbol, on
+the stream that is already open. Opening a stream creates nothing: an instrument still only comes into
+existence through `POST /api/orders`, so `GET /api/instruments/{symbol}/orderbook` and
+`GET /api/instruments/{symbol}/trades` keep answering `404 UNKNOWN_INSTRUMENT` for it, while a
+malformed symbol is still `400 VALIDATION_ERROR` on the stream as well.
+
 ## Symbol rules
 
 A symbol identifies a tradable instrument and is required everywhere.
@@ -607,6 +683,8 @@ A symbol identifies a tradable instrument and is required everywhere.
 - A **well formed but unknown** symbol on a query endpoint (`orderbook` or `trades`) is
   `404 UNKNOWN_INSTRUMENT`, because no order has ever created that book. `POST /api/orders` is the
   only way to bring an instrument into existence.
+- A **well formed but unknown** symbol on a **stream** endpoint is not an error at all: the stream
+  opens and streams an empty book until the first order.
 
 ## Error handling
 
@@ -634,7 +712,7 @@ Every failing request returns the same JSON shape, produced by `GlobalExceptionH
 | `INVALID_PARAMETER`    | `400`  | A parameter has an invalid value, for example a non UUID order id    |
 | `INVALID_ORDER`        | `400`  | A business rule was broken, for example a LIMIT order without a price |
 | `NOT_FOUND`            | `404`  | Unknown order id or unknown path                                      |
-| `UNKNOWN_INSTRUMENT`   | `404`  | A well formed symbol that has no book yet                             |
+| `UNKNOWN_INSTRUMENT`   | `404`  | A well formed symbol that has no book yet, on `orderbook` or `trades` only |
 | `METHOD_NOT_ALLOWED`   | `405`  | Unsupported HTTP method on an existing path                           |
 | `INVALID_ORDER_STATE`  | `422`  | A well formed request that breaks the order lifecycle, for example cancelling a filled order |
 | `INTERNAL_ERROR`       | `500`  | Last resort handler, so internal failures keep the standard shape     |
@@ -687,6 +765,14 @@ routing:
   unknown instrument, malformed symbols rejected without creating an instrument, sixteen threads
   racing on the first order of a new symbol, and the isolation guarantee that two symbols never match
   even at the same price while the same symbol does.
+- `MarketBroadcasterTest`: what a subscriber receives on subscription (the current book and tape, an
+  empty book and an empty tape for a symbol without one, the real state after its first order), that a
+  publish reaches the subscribers of one symbol only, the keep-alive comment, and that completion,
+  timeout, error or a broken write all unregister a subscriber without affecting the others.
+- `MarketStreamApiTest`: end-to-end tests of the two stream endpoints: `200 text/event-stream` on an
+  open async request, any valid symbol streaming an empty book (never a `404`), the first order
+  replacing that empty book on the already open stream, a malformed symbol still `400`, and the REST
+  endpoints answering unchanged while a stream receives every publish.
 - `InstrumentCatalogTest`: the parser skips the header and the truncated lines, a blank query returns
   the default slice in catalogue order, symbol prefix matches rank before name matches and both are
   case insensitive, the limit caps the results, and the shipped catalogue really holds the 47 SIX

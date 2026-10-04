@@ -20,10 +20,12 @@ const INSTRUMENTS_STREAM = '/api/instruments/stream'
  * what a REST call would have returned and can be shared by both channels.
  *
  * The reactive `connected` flag is the contract with the caller: while it is true the stream is
- * the primary source of live updates and polling can stand down, and when it turns false the caller
- * falls back to polling. Any stream error, an unknown instrument answering 404, a proxy that drops
- * the connection or a browser without `EventSource` at all closes both streams and flips the flag,
- * so a page never waits for data that is not coming.
+ * the primary source of live updates, and when it turns false the caller falls back to polling. Any
+ * stream error, a proxy that drops the connection or a browser without `EventSource` at all closes
+ * both streams and flips the flag, so a page never waits for data that is not coming.
+ *
+ * Every valid symbol can be streamed, even one with no book yet: that subscriber simply receives an
+ * empty book first, then the real state from the moment the first order creates the instrument.
  *
  * @param {import('vue').Ref<string>} symbol active instrument, watched for changes
  * @param {{

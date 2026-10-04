@@ -76,6 +76,19 @@ public class OrderService {
         return registry.engineOrThrow(rawSymbol).recentTrades(limit);
     }
 
+    /**
+     * Tells whether an instrument already exists, that is whether an order ever created its book.
+     *
+     * <p>Unlike {@link #getBookSnapshot(String)} and {@link #getRecentTrades(String, int)} it never
+     * throws for a well formed symbol: the push channel uses it to tell "empty instrument" from
+     * "malformed symbol", and only the latter is an error.</p>
+     *
+     * @throws IllegalArgumentException when the symbol is missing or malformed (HTTP 400)
+     */
+    public boolean hasInstrument(String rawSymbol) {
+        return registry.hasEngine(rawSymbol);
+    }
+
     /** Every active instrument with its stats, sorted by symbol. */
     public List<InstrumentStats> listInstruments() {
         return registry.engines().stream()

@@ -60,6 +60,20 @@ public class MarketRegistry {
         return engine;
     }
 
+    /**
+     * Tells whether an instrument already exists, that is whether an order ever created its engine.
+     *
+     * <p>The read-only counterpart of {@link #engineFor(String)}: unlike it, it never creates
+     * anything, which is what lets the SSE stream accept a symbol whose book does not exist yet.</p>
+     *
+     * @param rawSymbol symbol to normalize (trim + uppercase)
+     * @return {@code true} when the instrument is active
+     * @throws IllegalArgumentException when the symbol is missing or malformed (HTTP 400)
+     */
+    public boolean hasEngine(String rawSymbol) {
+        return engines.containsKey(SymbolRules.normalize(rawSymbol));
+    }
+
     /** Symbols of the active instruments, sorted alphabetically. */
     public List<String> symbols() {
         return engines.keySet().stream().sorted().toList();
