@@ -144,11 +144,11 @@ class OrderApiIntegrationTest {
                                 {"symbol":"BTC-USD","side":"BUY","type":"LIMIT","quantity":"1"}"""))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.status").value(400))
-                .andExpect(jsonPath("$.error").value("Bad Request"))
+                .andExpect(jsonPath("$.title").value("Bad Request"))
                 .andExpect(jsonPath("$.code").value("INVALID_ORDER"))
-                .andExpect(jsonPath("$.message").value("price must be greater than 0 for LIMIT orders"))
-                .andExpect(jsonPath("$.path").value("/api/orders"))
-                .andExpect(jsonPath("$.timestamp").exists());
+                .andExpect(jsonPath("$.detail").value("price must be greater than 0 for LIMIT orders"))
+                .andExpect(jsonPath("$.instance").value("/api/orders"))
+                .andExpect(jsonPath("$.flowId").exists());
     }
 
     @Test
@@ -160,7 +160,7 @@ class OrderApiIntegrationTest {
                                 {"symbol":"BTC-USD","side":"BUY","type":"MARKET","price":"100.00","quantity":"1"}"""))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("INVALID_ORDER"))
-                .andExpect(jsonPath("$.message").value("price must not be provided for MARKET orders"));
+                .andExpect(jsonPath("$.detail").value("price must not be provided for MARKET orders"));
     }
 
     @Test
@@ -239,7 +239,7 @@ class OrderApiIntegrationTest {
                                 {"symbol":"BTC-USD","side":"LONG","type":"LIMIT","price":"100.00","quantity":"1"}"""))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("MALFORMED_JSON"))
-                .andExpect(jsonPath("$.message").exists());
+                .andExpect(jsonPath("$.detail").exists());
     }
 
     @Test
@@ -261,8 +261,8 @@ class OrderApiIntegrationTest {
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.status").value(404))
                 .andExpect(jsonPath("$.code").value("NOT_FOUND"))
-                .andExpect(jsonPath("$.message").value("order " + NO_SUCH_ORDER_ID + " not found"))
-                .andExpect(jsonPath("$.path").value("/api/orders/" + NO_SUCH_ORDER_ID));
+                .andExpect(jsonPath("$.detail").value("order " + NO_SUCH_ORDER_ID + " not found"))
+                .andExpect(jsonPath("$.instance").value("/api/orders/" + NO_SUCH_ORDER_ID));
     }
 
     @Test
@@ -301,10 +301,7 @@ class OrderApiIntegrationTest {
         String id = submit("BTC-USD", "BUY", 130.00, "3");
 
         mockMvc.perform(delete("/api/orders/{id}", id))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.id").value(id))
-                .andExpect(jsonPath("$.symbol").value("BTC-USD"))
-                .andExpect(jsonPath("$.status").value("CANCELLED"));
+                .andExpect(status().isNoContent());
 
         mockMvc.perform(get("/api/orders/{id}", id))
                 .andExpect(status().isOk())
@@ -319,9 +316,7 @@ class OrderApiIntegrationTest {
 
         // Cancelling an ETH-USD order must not touch the BTC-USD book.
         mockMvc.perform(delete("/api/orders/{id}", ethId))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.symbol").value("ETH-USD"))
-                .andExpect(jsonPath("$.status").value("CANCELLED"));
+                .andExpect(status().isNoContent());
 
         mockMvc.perform(get("/api/instruments/BTC-USD/orderbook"))
                 .andExpect(status().isOk())
@@ -348,7 +343,7 @@ class OrderApiIntegrationTest {
                 .andExpect(status().isUnprocessableEntity())
                 .andExpect(jsonPath("$.status").value(422))
                 .andExpect(jsonPath("$.code").value("INVALID_ORDER_STATE"))
-                .andExpect(jsonPath("$.message").value("order " + sellId + " cannot be cancelled because it is FILLED"));
+                .andExpect(jsonPath("$.detail").value("order " + sellId + " cannot be cancelled because it is FILLED"));
     }
 
     @Test
@@ -364,11 +359,11 @@ class OrderApiIntegrationTest {
     void cancelTwice() throws Exception {
         String id = submit("BTC-USD", "BUY", 150.00, "1");
 
-        mockMvc.perform(delete("/api/orders/{id}", id)).andExpect(status().isOk());
+        mockMvc.perform(delete("/api/orders/{id}", id)).andExpect(status().isNoContent());
         mockMvc.perform(delete("/api/orders/{id}", id))
                 .andExpect(status().isUnprocessableEntity())
                 .andExpect(jsonPath("$.code").value("INVALID_ORDER_STATE"))
-                .andExpect(jsonPath("$.message").value("order " + id + " cannot be cancelled because it is CANCELLED"));
+                .andExpect(jsonPath("$.detail").value("order " + id + " cannot be cancelled because it is CANCELLED"));
     }
 
     // ------------------------------------------------------------------ GET /api/instruments
@@ -641,3 +636,4 @@ class OrderApiIntegrationTest {
         return matcher.group(1);
     }
 }
+

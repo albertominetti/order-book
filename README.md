@@ -182,7 +182,8 @@ src/main/java/com/albertominetti/orderbook
 │   ├── MarketStreamController    Server-Sent Events endpoints
 │   ├── HomeController            landing page at /, links to the web app and the documentation
 │   ├── SpaController             forwards /app to the built Vue application
-│   └── GlobalExceptionHandler    maps exceptions to HTTP responses
+│   ├── FlowIdFilter              propagates the X-Flow-ID header (generating it when absent)
+│   └── GlobalExceptionHandler    maps exceptions to RFC 7807 problem+json responses
 ├── dto/                          request/response records
 │   ├── CreateOrderRequest        order payload, symbol included
 │   ├── MatchResponse             order + trades returned by POST /api/orders
@@ -191,7 +192,7 @@ src/main/java/com/albertominetti/orderbook
 │   ├── PriceLevelResponse        one aggregated price level
 │   ├── OrderBookResponse         book snapshot of one instrument
 │   ├── InstrumentStatsResponse   one instrument in the instrument list
-│   └── ApiErrorResponse          the single error shape
+│   └── ProblemDetailResponse     RFC 7807 problem body, served as application/problem+json
 └── exception/                    domain exceptions
     ├── InvalidOrderException     business rule broken       -> 400
     ├── OrderNotFoundException    unknown order id           -> 404
@@ -231,6 +232,7 @@ src/test/java/com/albertominetti/orderbook
 ├── web/MarketStreamApiTest.java
 ├── web/MultiInstrumentApiTest.java
 ├── web/InstrumentSearchApiTest.java
+├── web/ZalandoGuidelinesApiTest.java
 ├── web/HomePageTest.java
 └── web/SpaRoutingTest.java
 ```
@@ -395,13 +397,16 @@ of the dev server is packaged: `npm run build` writes the production bundle to t
 
 ## REST API
 
-Base path: `/api`. All payloads are JSON.
+Base path: `/api`. All payloads are JSON, except the RFC 7807 errors, which are
+`application/problem+json` (see [Error handling](#error-handling)). JSON property names and query
+parameter names are lowerCamelCase: this is a deliberate deviation from the Zalando snake_case
+convention, kept for consistency with the rest of the API.
 
 | Method   | Path                                        | Success | Purpose                                     |
 |----------|---------------------------------------------|---------|---------------------------------------------|
 | `POST`   | `/api/orders`                               | `201`   | Submit an order on an instrument            |
 | `GET`    | `/api/orders/{id}`                          | `200`   | Fetch one order of any instrument           |
-| `DELETE` | `/api/orders/{id}`                          | `200`   | Cancel a resting order                      |
+| `DELETE` | `/api/orders/{id}`                          | `204`   | Cancel a resting order                      |
 | `GET`    | `/api/instruments`                          | `200`   | List active instruments with their stats    |
 | `GET`    | `/api/instruments/search?q=&limit=`         | `200`   | Search the instrument catalogue             |
 | `GET`    | `/api/instruments/{symbol}/orderbook`       | `200`   | Book snapshot of one instrument             |
@@ -485,8 +490,9 @@ curl -s http://localhost:8080/api/orders/6f1c1e2a-1c2b-4c3d-9e8f-0a1b2c3d4e5f
 ### DELETE /api/orders/{id}
 
 Cancel an order that is still resting on the book of its own instrument. The request is routed to that
-instrument only, so the books of the other instruments are untouched. Returns the cancelled order with
-status `CANCELLED`.
+instrument only, so the books of the other instruments are untouched. Answers `204 No Content` with an
+empty body: the new state is pushed on the SSE stream and can be read again with
+`GET /api/orders/{id}`.
 
 `422 INVALID_ORDER_STATE` when the order cannot be cancelled: it is already `FILLED` or already
 `CANCELLED`, or it is a MARKET order that never rests. `404 NOT_FOUND` when the id is unknown.
@@ -687,22 +693,27 @@ A symbol identifies a tradable instrument and is required everywhere.
 
 ## Error handling
 
-Every failing request returns the same JSON shape, produced by `GlobalExceptionHandler`:
+Every failing request is an [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807) problem detail, served
+with `Content-Type: application/problem+json` and produced by `GlobalExceptionHandler`:
 
 ```json
 {
-  "timestamp": "2026-10-04T09:00:00Z",
+  "type": "about:blank",
+  "title": "Bad Request",
   "status": 400,
-  "error": "Bad Request",
+  "detail": "invalid request: quantity quantity must be greater than 0",
+  "instance": "/api/orders",
   "code": "VALIDATION_ERROR",
-  "message": "invalid request: quantity quantity must be greater than 0",
-  "path": "/api/orders",
+  "flowId": "3f1b7c58-0000-4000-8000-00000000dead",
   "violations": [{"field": "quantity", "message": "quantity must be greater than 0"}]
 }
 ```
 
-`violations` is omitted when empty, because Jackson is configured with
-`default-property-inclusion: non_null`. The `code` is stable and machine-readable:
+Besides the five standard members (`type`, `title`, `status`, `detail`, `instance`) it carries two
+extensions: `code`, a stable machine-readable error code, and `violations`, the field-level validation
+details. `flowId` repeats the `X-Flow-ID` response header. `instance`, `flowId` and `violations` are
+omitted when they have no value, because Jackson is configured with `default-property-inclusion: non_null`.
+The `code` is stable and machine-readable:
 
 | Code                   | Status | Raised when                                                           |
 |------------------------|--------|-----------------------------------------------------------------------|
@@ -714,6 +725,27 @@ Every failing request returns the same JSON shape, produced by `GlobalExceptionH
 | `METHOD_NOT_ALLOWED`   | `405`  | Unsupported HTTP method on an existing path                           |
 | `INVALID_ORDER_STATE`  | `422`  | A well formed request that breaks the order lifecycle, for example cancelling a filled order |
 | `INTERNAL_ERROR`       | `500`  | Last resort handler, so internal failures keep the standard shape     |
+
+### X-Flow-ID
+
+Every response carries an `X-Flow-ID` header. When the client sends one it is reused verbatim,
+otherwise the server generates a fresh UUID. The same value is repeated in the `flowId` member of the
+problem JSON, so a failing request can be correlated between the body and the logs:
+
+```bash
+curl -s -i -H 'X-Flow-ID: my-trace-42' http://localhost:8080/api/orders/00000000-0000-0000-0000-000000000000
+```
+
+### Deviations from the Zalando guidelines
+
+This API follows the [Zalando RESTful API guidelines](https://opensource.zalando.com/restful-api-guidelines/)
+for errors (RFC 7807, `application/problem+json`), for status codes (`201` with a `Location` header on
+create, `204` on delete) and for the `X-Flow-ID` header, with two deliberate deviations:
+
+- JSON property names and query parameter names stay in **lowerCamelCase** instead of the Zalando
+  **snake_case**, to stay consistent with the rest of the API and with the JavaScript client.
+- every endpoint is served under the **`/api` base path**, kept for backward compatibility with the
+  existing clients and links.
 
 The old single book endpoints (`GET /api/orderbook`, `GET /api/trades`) are gone and answer
 `404 NOT_FOUND`: every query is now scoped to an instrument. `UNKNOWN_INSTRUMENT`, the code
@@ -797,3 +829,4 @@ The frontend build runs in the `generate-resources` phase, therefore every `mvn 
 ## License
 
 MIT. See [LICENSE](LICENSE).
+

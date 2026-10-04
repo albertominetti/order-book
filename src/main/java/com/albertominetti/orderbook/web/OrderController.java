@@ -7,6 +7,7 @@ import com.albertominetti.orderbook.dto.InstrumentStatsResponse;
 import com.albertominetti.orderbook.dto.MatchResponse;
 import com.albertominetti.orderbook.dto.OrderBookResponse;
 import com.albertominetti.orderbook.dto.OrderResponse;
+import com.albertominetti.orderbook.dto.ProblemDetailResponse;
 import com.albertominetti.orderbook.dto.TradeResponse;
 import com.albertominetti.orderbook.engine.MatchingEngine;
 import com.albertominetti.orderbook.exception.OrderNotFoundException;
@@ -20,6 +21,10 @@ import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Pattern;
+import io.swagger.v3.oas.annotations.media.Content;
+import io.swagger.v3.oas.annotations.media.Schema;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import org.springframework.http.ResponseEntity;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -79,6 +84,12 @@ public class OrderController {
      *
      * @return 201 with a {@code Location} header pointing to the new order
      */
+    @ApiResponses({
+            @ApiResponse(responseCode = "201", description = "order accepted; the Location header points to it"),
+            @ApiResponse(responseCode = "400", description = "malformed body or a broken business rule",
+                    content = @Content(mediaType = "application/problem+json",
+                            schema = @Schema(implementation = ProblemDetailResponse.class)))
+    })
     @PostMapping("/orders")
     public ResponseEntity<MatchResponse> submitOrder(@Valid @RequestBody CreateOrderRequest request) {
         MatchResponse response = MatchResponse.from(orderService.submitOrder(request));
@@ -94,6 +105,12 @@ public class OrderController {
      *
      * @throws OrderNotFoundException when the id is unknown (404)
      */
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "the order in its current state"),
+            @ApiResponse(responseCode = "404", description = "no order has this id",
+                    content = @Content(mediaType = "application/problem+json",
+                            schema = @Schema(implementation = ProblemDetailResponse.class)))
+    })
     @GetMapping("/orders/{id}")
     public OrderResponse getOrder(@PathVariable UUID id) {
         return OrderResponse.from(orderService.getOrder(id));
@@ -102,14 +119,24 @@ public class OrderController {
     /**
      * Cancels an order still resting on the book of its own instrument.
      *
+     * @return 204 with no body
      * @throws OrderNotFoundException when the id is unknown (404)
      * @throws OrderStateException    when the order is not resting any more (422)
      */
+    @ApiResponses({
+            @ApiResponse(responseCode = "204", description = "order cancelled; no content"),
+            @ApiResponse(responseCode = "404", description = "no order has this id",
+                    content = @Content(mediaType = "application/problem+json",
+                            schema = @Schema(implementation = ProblemDetailResponse.class))),
+            @ApiResponse(responseCode = "422", description = "the order cannot be cancelled in its state",
+                    content = @Content(mediaType = "application/problem+json",
+                            schema = @Schema(implementation = ProblemDetailResponse.class)))
+    })
     @DeleteMapping("/orders/{id}")
-    public OrderResponse cancelOrder(@PathVariable UUID id) {
+    public ResponseEntity<Void> cancelOrder(@PathVariable UUID id) {
         OrderResponse response = OrderResponse.from(orderService.cancelOrder(id));
         publishBookOnly(response.symbol());
-        return response;
+        return ResponseEntity.noContent().build();
     }
 
     /** Every active instrument with its resting orders, best prices and last price. */
@@ -131,6 +158,9 @@ public class OrderController {
      * @param query free text to match, defaults to blank
      * @param limit how many instruments to return (1..{@value #MAX_INSTRUMENT_SEARCH_LIMIT})
      */
+    @ApiResponse(responseCode = "400", description = "an invalid query parameter",
+            content = @Content(mediaType = "application/problem+json",
+                    schema = @Schema(implementation = ProblemDetailResponse.class)))
     @GetMapping("/instruments/search")
     public List<InstrumentRef> searchInstruments(
             @RequestParam(name = "q", defaultValue = "") String query,
@@ -147,6 +177,9 @@ public class OrderController {
      *
      * @throws UnknownInstrumentException when nothing was ever traded on the symbol (404)
      */
+    @ApiResponse(responseCode = "404", description = "nothing was ever traded on this symbol",
+            content = @Content(mediaType = "application/problem+json",
+                    schema = @Schema(implementation = ProblemDetailResponse.class)))
     @GetMapping("/instruments/{symbol}/orderbook")
     public OrderBookResponse getOrderBook(@PathVariable
                                           @Pattern(regexp = SymbolRules.RAW_PATTERN_SOURCE,
@@ -162,6 +195,9 @@ public class OrderController {
      * @param limit how many orders to return (1..{@value #MAX_ORDER_LIMIT})
      * @throws IllegalArgumentException when the symbol is missing or malformed (400)
      */
+    @ApiResponse(responseCode = "400", description = "the symbol is missing or malformed",
+            content = @Content(mediaType = "application/problem+json",
+                    schema = @Schema(implementation = ProblemDetailResponse.class)))
     @GetMapping("/instruments/{symbol}/orders")
     public List<OrderResponse> getOrders(
             @PathVariable
@@ -184,6 +220,9 @@ public class OrderController {
      * @param limit how many trades to return (1..{@value MatchingEngine#MAX_RECENT_TRADES})
      * @throws UnknownInstrumentException when nothing was ever traded on the symbol (404)
      */
+    @ApiResponse(responseCode = "404", description = "nothing was ever traded on this symbol",
+            content = @Content(mediaType = "application/problem+json",
+                    schema = @Schema(implementation = ProblemDetailResponse.class)))
     @GetMapping("/instruments/{symbol}/trades")
     public List<TradeResponse> getTrades(
             @PathVariable
@@ -234,4 +273,5 @@ public class OrderController {
                 .toList();
     }
 }
+
 
