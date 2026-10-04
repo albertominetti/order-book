@@ -1,6 +1,11 @@
 # Build output: rebuilt inside the image, never copied from the host.
 target/
 
+# Frontend build/dependency output: rebuilt inside the image.
+frontend/node_modules/
+frontend/dist/
+frontend/node/
+
 # Version control metadata.
 .git/
 

@@ -45,6 +45,22 @@
     a {
       color: #1a5fb4;
     }
+    li.primary {
+      margin-bottom: 1.25rem;
+      padding: 0.85rem;
+      border: 1px solid #1a5fb4;
+      border-radius: 0.5rem;
+      background: #eef4fc;
+    }
+    li.primary a {
+      display: inline-block;
+      padding: 0.35rem 0.65rem;
+      border-radius: 0.35rem;
+      background: #1a5fb4;
+      color: #ffffff;
+      font-weight: 600;
+      text-decoration: none;
+    }
     footer {
       margin-top: 1.5rem;
       font-size: 0.8rem;
@@ -59,6 +75,10 @@
       Multi-instrument in-memory order book and matching engine exposed as a REST API.
     </p>
     <ul>
+      <li class="primary">
+        <a href="/app/">Open the web app (Vue 3)</a>
+        : trade on the live order book, place and cancel orders.
+      </li>
       <li>
         <a th:href="@{/swagger-ui.html}" href="/swagger-ui.html">API documentation (Swagger UI)</a>
         : browse and try out every endpoint.

@@ -11,7 +11,10 @@ per-instrument trade tape.
 
 No database, no external broker: everything lives in memory, which keeps the project easy to read,
 run and test. An instrument exists from the moment its first order arrives and lives for the whole
-application lifetime.
+application lifetime. Separately from that runtime state, a static catalogue of tradable symbols
+(47 Swiss SIX names and the 503 S&P 500 constituents, shipped as `src/main/resources/instruments.tsv`)
+is loaded at startup and served as a search endpoint, which is what the instrument picker of the web
+app queries.
 
 ## Features
 
@@ -22,16 +25,19 @@ application lifetime.
 - Cancel a resting order.
 - Aggregated order book snapshot with best bid, best ask and spread.
 - List of active instruments with their stats.
+- Instrument catalogue search over the Swiss SIX names and the S&P 500 constituents.
 - Recent trades tape per instrument.
 - Symbol normalization (trim + upper-case) and shape validation.
 - Validation and consistent error responses (`201`, `200`, `400`, `404`, `405`, `422`).
 - Thread-safe: every engine has its own lock, so instruments never block each other.
+- A Vue 3 web app at `/app/` that trades on the API from the browser.
 
 ## Tech stack
 
 - Java 25
 - Spring Boot 4.1.1 (Web, Validation)
 - springdoc-openapi 3.x (OpenAPI 3 + Swagger UI)
+- Vue 3 + Vite (single page frontend under `frontend/`)
 - Maven
 - JUnit 5 + MockMvc
 
@@ -45,7 +51,8 @@ mvn test
 mvn spring-boot:run
 ```
 
-Then open <http://localhost:8080/swagger-ui.html>, or submit an order:
+Then open the web app at <http://localhost:8080/app/>, the documentation at
+<http://localhost:8080/swagger-ui.html>, or submit an order:
 
 ```bash
 curl -s -X POST http://localhost:8080/api/orders \
@@ -148,6 +155,7 @@ src/main/java/com/albertominetti/orderbook
 │   ├── Side, OrderType           BUY/SELL, LIMIT/MARKET
 │   ├── OrderStatus               NEW, PARTIALLY_FILLED, FILLED, CANCELLED
 │   ├── SymbolRules               symbol normalization and validation
+│   ├── InstrumentRef             a catalogue entry: symbol, name and market
 │   ├── PriceLevel                aggregated price level
 │   ├── InstrumentStats           per-instrument summary
 │   └── Trade                     an executed trade, carries its symbol
@@ -156,11 +164,13 @@ src/main/java/com/albertominetti/orderbook
 │   └── MatchResult               order + generated trades
 ├── service/
 │   ├── MarketRegistry            one engine per symbol, created lazily
+│   ├── InstrumentCatalog         instrument catalogue loaded from instruments.tsv, searched by symbol or name
 │   ├── OrderService              application facade, routes every request by symbol
 │   └── EngineConfiguration       Spring wiring of the Clock
 ├── web/
 │   ├── OrderController           REST endpoints
-│   ├── HomeController            landing page at /, links to the documentation
+│   ├── HomeController            landing page at /, links to the web app and the documentation
+│   ├── SpaController             forwards /app to the built Vue application
 │   └── GlobalExceptionHandler    maps exceptions to HTTP responses
 ├── dto/                          request/response records
 │   ├── CreateOrderRequest        order payload, symbol included
@@ -179,10 +189,36 @@ src/main/java/com/albertominetti/orderbook
 
 src/main/resources/application.yml   configuration (YAML)
 
+src/main/resources/instruments.tsv   instrument catalogue: # symbol<TAB>name<TAB>market
+
+src/main/resources/templates/index.html   Thymeleaf landing page
+
+frontend/                            Vue 3 + Vite single page application (built by Maven)
+├── package.json                     npm scripts: dev, build, preview
+├── vite.config.js                   base /app/, output target/classes/static/app, /api dev proxy
+├── index.html                       entry document of the app
+└── src/
+    ├── main.js                      mounts the application
+    ├── App.vue                      layout, instrument selection, polling and order state
+    ├── api.js                       fetch wrapper over the relative /api paths, normalizes errors
+    ├── usePoller.js                 one request in flight per stream, stops with the component
+    └── components/
+        ├── InstrumentSelect.vue     instrument picker, debounced search over the catalogue
+        ├── OrderForm.vue            LIMIT/MARKET order entry
+        ├── OrderBook.vue            live book, best bid/ask, spread, last price
+        ├── Trades.vue               recent trades of the instrument
+        ├── Instruments.vue          active instruments, click to switch
+        └── MyOrders.vue             orders of this browser, with cancel, responsive on phones
+
 src/test/java/com/albertominetti/orderbook
 ├── engine/MatchingEngineTest.java
 ├── service/MarketRegistryTest.java
-└── web/OrderApiIntegrationTest.java
+├── service/InstrumentCatalogTest.java
+├── web/OrderApiIntegrationTest.java
+├── web/MultiInstrumentApiTest.java
+├── web/InstrumentSearchApiTest.java
+├── web/HomePageTest.java
+└── web/SpaRoutingTest.java
 ```
 
 ### Design decisions
@@ -211,6 +247,12 @@ src/test/java/com/albertominetti/orderbook
   `Locale.ROOT`) and validates its shape, `[A-Z0-9][A-Z0-9._-]{0,19}` after normalization, that is one
   to twenty characters starting with a letter or a digit. The same rule is exposed as a Bean
   Validation pattern, so body and path variables are checked the same way.
+- **The catalogue is read-only reference data on the server.** `InstrumentCatalog` reads
+  `classpath:instruments.tsv` once, when the singleton is created, and keeps the 550 entries with
+  their symbol and name already lower-cased, so a search is a single scan with no allocation. A query
+  is ranked in two passes: instruments whose symbol starts with it first, then those whose name
+  contains it, each sorted by symbol. Listing an instrument in the catalogue never creates its book:
+  the catalogue only suggests symbols, `POST /api/orders` still brings an instrument to life.
 - **Data structures.** Each side of a book is a `TreeMap<price, Deque<Order>>`. Bids are ordered
   descending, asks ascending, so the best price is always `firstKey()`. The `Deque` gives FIFO
   ordering inside a level. A `LinkedHashMap` keeps every order ever accepted, so terminal orders can
@@ -246,6 +288,11 @@ platform and falls back to `8080` locally), the Jackson defaults, the springdoc 
 log levels. Jackson is configured with `default-property-inclusion: non_null`, so optional fields such
 as `price` on a MARKET order, or `bestAsk` on a one-sided book, are simply omitted from the JSON.
 
+The build toolchain has its own properties in `pom.xml`: `node.version` and `npm.version`, the Node
+and npm versions `frontend-maven-plugin` installs inside `frontend/`, plus
+`frontend-maven-plugin.version` itself. Bumping `node.version` is all it takes to move the frontend
+build to another Node LTS.
+
 ## API documentation
 
 springdoc-openapi is included, so an interactive API reference is generated at runtime:
@@ -254,8 +301,68 @@ springdoc-openapi is included, so an interactive API reference is generated at r
 - OpenAPI JSON: <http://localhost:8080/v3/api-docs>
 
 The root path <http://localhost:8080/> serves a small landing page (`HomeController`) that describes
-the service and links to Swagger UI and to the raw OpenAPI JSON, so opening the application in a
-browser is enough to find the documentation.
+the service, links to the web app at `/app/` and to Swagger UI and to the raw OpenAPI JSON, so
+opening the application in a browser is enough to find everything.
+
+## Frontend (Vue 3 + Vite)
+
+A single page application written with **Vue 3** and built by **Vite** drives the very same REST API
+from the browser. It is a standalone Vite project under [`frontend/`](frontend) and it is built by
+[Maven](pom.xml): `com.github.eirslett:frontend-maven-plugin` downloads its own Node and npm, runs
+`npm install` and then `vite build`.
+
+The bundle is written to `target/classes/static/app`, so it ends up **in the jar and in the GraalVM
+native image** and is served by Spring Boot as a static resource at <http://localhost:8080/app/>.
+`SpaController` forwards `/app` and `/app/` to `/app/index.html`, and the landing page at `/` links
+to it with a prominent "Open the web app (Vue 3)" entry.
+
+What it does:
+
+- switch instrument: a single searchable dropdown, the only instrument field of the page. It has no
+  static list any more: every keystroke queries the backend catalogue with
+  `GET /api/instruments/search?q=<term>&limit=50`, debounced by 200 ms, with the request in flight
+  aborted and stale answers ignored, so at most one search is outstanding. Rows show symbol, name
+  and market, ArrowUp / ArrowDown / Enter / Escape and the mouse all work, and a ticker nobody lists
+  is still offered as a free form "Use \<TICKER\>" row;
+- show the active instruments of `GET /api/instruments`, clickable to switch;
+- submit orders, BUY or SELL, LIMIT or MARKET, through `POST /api/orders`, with the price required
+  only for a LIMIT order;
+- show the live book of the selected instrument from `GET /api/instruments/{symbol}/orderbook`, with
+  the best bid, the best ask, the spread and the last price;
+- show the last 20 trades from `GET /api/instruments/{symbol}/trades?limit=20`;
+- keep the orders submitted from the browser and cancel them with `DELETE /api/orders/{id}`, with a
+  table that fits on a phone: below 600px each order becomes a card and the Cancel button gets its
+  own full width row, above it the table sits in a horizontally scrollable container;
+- poll every stream once per second, never with more than one request in flight per stream, and stop
+  polling when the page is left;
+- show an empty state per panel and the `code` and `message` of the uniform API error payload when a
+  call fails.
+
+All calls use relative `/api` paths, so the app always talks to the same origin that served it: no
+configuration and no CORS. The only external piece is Vue itself, which is bundled.
+
+Because the frontend build is bound to the `generate-resources` phase, `mvn test` builds it too, and
+a broken frontend fails the build:
+
+```bash
+mvn test
+```
+
+### Develop the frontend
+
+Maven installs Node and npm inside `frontend/`, but for an edit and reload loop the Vite dev server
+is faster, because it serves the sources with hot module replacement:
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+The dev server answers on <http://localhost:5173/app/> and proxies `/api` to
+<http://localhost:8080>, so the API has to run in another terminal (`mvn spring-boot:run`). Nothing
+of the dev server is packaged: `npm run build` writes the production bundle to the same
+`target/classes/static/app` directory that Maven uses.
 
 ## REST API
 
@@ -267,6 +374,7 @@ Base path: `/api`. All payloads are JSON.
 | `GET`    | `/api/orders/{id}`                          | `200`   | Fetch one order of any instrument           |
 | `DELETE` | `/api/orders/{id}`                          | `200`   | Cancel a resting order                      |
 | `GET`    | `/api/instruments`                          | `200`   | List active instruments with their stats    |
+| `GET`    | `/api/instruments/search?q=&limit=`         | `200`   | Search the instrument catalogue             |
 | `GET`    | `/api/instruments/{symbol}/orderbook`       | `200`   | Book snapshot of one instrument             |
 | `GET`    | `/api/instruments/{symbol}/trades?limit=`   | `200`   | Recent trades of one instrument             |
 
@@ -383,6 +491,48 @@ curl -s http://localhost:8080/api/instruments
   }
 ]
 ```
+
+### GET /api/instruments/search
+
+Search the catalogue of tradable instruments shipped with the service, in
+[`src/main/resources/instruments.tsv`](src/main/resources/instruments.tsv): 47 Swiss SIX names
+followed by the 503 S&P 500 constituents. This is the source the instrument dropdown of the web app
+queries, so the UI and the API always suggest the same symbols.
+
+The optional `q` query parameter is trimmed and matched case insensitively, in two ranks: the
+instruments whose **symbol starts with** `q` come first, then the instruments whose **name contains**
+`q`, each group sorted by symbol. A blank `q` (the default) returns the head of the catalogue, which
+is how the dropdown opens on the Swiss names. The optional `limit` accepts 1 to 200 and defaults to
+50.
+
+Searching the catalogue never creates anything: an instrument only exists as a tradable book once an
+order has been submitted for it, so a symbol returned here can still answer
+`404 UNKNOWN_INSTRUMENT` on `/api/instruments/{symbol}/orderbook`.
+
+```bash
+curl -s 'http://localhost:8080/api/instruments/search?q=ubs&limit=10'
+```
+
+```json
+[
+  {"symbol": "UBSG", "name": "UBS Group", "market": "SIX"}
+]
+```
+
+A query on the name works too, and ranks after the symbol matches:
+
+```bash
+curl -s 'http://localhost:8080/api/instruments/search?q=roche'
+```
+
+```json
+[
+  {"symbol": "ROG", "name": "Roche Holding", "market": "SIX"}
+]
+```
+
+A query that matches nothing returns an empty array. A `limit` outside 1 to 200 is
+`400 VALIDATION_ERROR`, a non numeric `limit` is `400 INVALID_PARAMETER`.
 
 ### GET /api/instruments/{symbol}/orderbook
 
@@ -517,7 +667,9 @@ analysis removes unused code and enables early class initialization.
 mvn test
 ```
 
-The suite is organized in three layers plus the landing page test:
+The suite is organized in layers: pure unit tests for the engine, the registry and the catalogue,
+end-to-end MockMvc tests for the REST API, then the landing page and the single page application
+routing:
 
 - `MatchingEngineTest`: the matching core on a frozen clock. Resting orders, full match, partial fills,
   price-time priority (best price first, FIFO inside a level), market orders sweeping several levels
@@ -528,11 +680,26 @@ The suite is organized in three layers plus the landing page test:
   unknown instrument, malformed symbols rejected without creating an instrument, sixteen threads
   racing on the first order of a new symbol, and the isolation guarantee that two symbols never match
   even at the same price while the same symbol does.
+- `InstrumentCatalogTest`: the parser skips the header and the truncated lines, a blank query returns
+  the default slice in catalogue order, symbol prefix matches rank before name matches and both are
+  case insensitive, the limit caps the results, and the shipped catalogue really holds the 47 SIX
+  names and the 503 S&P 500 constituents.
 - `OrderApiIntegrationTest`: end-to-end MockMvc tests of every endpoint, including the `201` plus
   `Location` contract, symbol normalization, `GET`/`DELETE` on an order of any instrument, the per
   instrument book and trade tape, instrument listing, the full error matrix and instrument isolation.
-- `HomePageTest`: the landing page at `/` answers `200` with an HTML body linking to Swagger UI and
-  to the OpenAPI JSON.
+- `InstrumentSearchApiTest`: end-to-end tests of `GET /api/instruments/search`: a query by symbol and
+  a query by name, the default 50 instruments slice, the limit and its boundaries (`0` and `201` are
+  `400`), an unknown query returning an empty array, the fact that the search creates no instrument
+  and does not shadow `/api/instruments/{symbol}/...`, and its presence in the OpenAPI description.
+- `MultiInstrumentApiTest`: two instruments interleaved end to end, symbol normalization, unknown
+  instrument on both query endpoints, the OpenAPI description and Bean Validation on the payload.
+- `HomePageTest`: the landing page at `/` answers `200` with an HTML body linking to the web app at
+  `/app/`, to Swagger UI and to the OpenAPI JSON.
+- `SpaRoutingTest`: `/app` and `/app/` forward to `/app/index.html`, and the entry document built by
+  Maven from `frontend/` is really served, so the bundle is packaged.
+
+The frontend build runs in the `generate-resources` phase, therefore every `mvn test` also runs
+`npm install` and `vite build` before the Java tests.
 
 ## License
 
