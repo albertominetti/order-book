@@ -9,7 +9,7 @@
 
 services:
   - type: web
-    name: order-book
+    name: albertos-order-book
     runtime: image
     image:
       url: ghcr.io/albertominetti/order-book:native
