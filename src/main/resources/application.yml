@@ -1,0 +1,29 @@
+# In-memory order book / matching engine demo
+spring:
+  application:
+    name: order-book
+  jackson:
+    # Keep the JSON payload stable and readable
+    default-property-inclusion: non_null
+    serialization:
+      write-dates-as-timestamps: false
+      fail-on-empty-beans: false
+  mvc:
+    # Log only the mapped requests, not the resolved resources
+    log-resolved-exception: false
+
+server:
+  port: 8080
+
+logging:
+  level:
+    org.springframework.web: INFO
+
+# OpenAPI 3 / Swagger UI (springdoc-openapi)
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+    operations-sorter: alpha
+    tags-sorter: alpha

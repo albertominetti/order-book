@@ -20,8 +20,9 @@ run and test.
 
 ## Tech stack
 
-- Java 21
-- Spring Boot 3.x (Web, Validation)
+- Java 25
+- Spring Boot 3.5 (Web, Validation)
+- springdoc-openapi (OpenAPI 3 + Swagger UI)
 - Maven
 - JUnit 5 + MockMvc
 
@@ -57,6 +58,8 @@ src/main/java/com/albertominetti/orderbook
 │   └── GlobalExceptionHandler    maps exceptions to HTTP responses
 ├── dto/                          request/response records
 └── exception/                    domain exceptions
+
+src/main/resources/application.yml   configuration (YAML)
 ```
 
 ### Design decisions
@@ -84,6 +87,19 @@ src/main/java/com/albertominetti/orderbook
 4. Remaining quantity: the remainder of a **LIMIT** order rests on the book, the remainder of a
    **MARKET** order is discarded (the order ends `FILLED` when fully consumed, `CANCELLED` when only
    partially consumed).
+
+## Configuration
+
+Configuration lives in `src/main/resources/application.yml` (YAML), not in a `.properties` file. It
+sets the application name, the HTTP port, the Jackson defaults, the springdoc paths and the log
+levels.
+
+## API documentation
+
+springdoc-openapi is included, so an interactive API reference is generated at runtime:
+
+- Swagger UI: <http://localhost:8080/swagger-ui.html>
+- OpenAPI JSON: <http://localhost:8080/v3/api-docs>
 
 ## API
 
