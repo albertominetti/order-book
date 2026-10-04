@@ -1,5 +1,6 @@
 const API_BASE = '/api'
 const DEFAULT_TRADE_LIMIT = 20
+const DEFAULT_SEARCH_LIMIT = 50
 
 export class ApiError extends Error {
   constructor(message, details = {}) {
@@ -10,6 +11,10 @@ export class ApiError extends Error {
     this.path = details.path || ''
     this.violations = Array.isArray(details.violations) ? details.violations : []
   }
+}
+
+function isAbort(error) {
+  return Boolean(error) && error.name === 'AbortError'
 }
 
 function describeUnknown(error, path) {
@@ -39,7 +44,7 @@ async function readJson(response) {
 }
 
 async function request(path, options = {}) {
-  const { method = 'GET', body } = options
+  const { method = 'GET', body, signal } = options
   const hasBody = body !== undefined
 
   let response
@@ -49,9 +54,13 @@ async function request(path, options = {}) {
       headers: hasBody
         ? { Accept: 'application/json', 'Content-Type': 'application/json' }
         : { Accept: 'application/json' },
-      body: hasBody ? JSON.stringify(body) : undefined
+      body: hasBody ? JSON.stringify(body) : undefined,
+      signal
     })
   } catch (error) {
+    if (isAbort(error)) {
+      throw error
+    }
     throw describeUnknown(error, API_BASE + path)
   }
 
@@ -74,6 +83,21 @@ async function request(path, options = {}) {
 
 export function listInstruments() {
   return request('/instruments')
+}
+
+/**
+ * Searches the server side instrument catalogue (Swiss SIX names and S&P 500 constituents).
+ *
+ * @param {string} query free text to match, blank returns the head of the catalogue
+ * @param {number} [limit] maximum number of instruments to ask for
+ * @param {{ signal?: AbortSignal }} [options] abort signal, so a stale search can be cancelled
+ * @returns {Promise<Array<{symbol: string, name: string, market: string}>>}
+ */
+export function searchInstruments(query, limit = DEFAULT_SEARCH_LIMIT, options = {}) {
+  const term = String(query == null ? '' : query).trim()
+  const safeLimit = Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : DEFAULT_SEARCH_LIMIT
+  const path = '/instruments/search?q=' + encodeURIComponent(term) + '&limit=' + safeLimit
+  return request(path, { signal: options.signal })
 }
 
 export function getOrderBook(symbol) {
@@ -101,6 +125,10 @@ export function isUnknownInstrument(error) {
   return error instanceof ApiError && error.code === 'UNKNOWN_INSTRUMENT'
 }
 
+export function isAborted(error) {
+  return isAbort(error)
+}
+
 export function describeError(error) {
   if (!error) {
     return ''
@@ -110,3 +138,4 @@ export function describeError(error) {
 }
 
 export const tradeLimit = DEFAULT_TRADE_LIMIT
+export const searchLimit = DEFAULT_SEARCH_LIMIT

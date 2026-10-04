@@ -71,11 +71,6 @@ watch(type, () => {
     <h2>Order entry</h2>
 
     <label class="field">
-      <span>Instrument</span>
-      <output class="readonly">{{ symbol }}</output>
-    </label>
-
-    <label class="field">
       <span>Side</span>
       <select v-model="side">
         <option v-for="value in sides" :key="value" :value="value">{{ value }}</option>
@@ -160,14 +155,6 @@ select {
 input:disabled {
   background: var(--surface-muted);
   color: var(--text-muted);
-}
-
-.readonly {
-  padding: 0.4rem 0.5rem;
-  border: 1px dashed var(--border);
-  border-radius: 0.35rem;
-  color: var(--text);
-  font-weight: 600;
 }
 
 .submit {
