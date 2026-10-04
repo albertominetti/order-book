@@ -6,7 +6,7 @@
 
 services:
   - type: web
-    name: order-book
+    name: albertos-order-book
     runtime: docker
     plan: free
     region: frankfurt
