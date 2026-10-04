@@ -16,15 +16,14 @@ import MyOrders from './components/MyOrders.vue'
 import OrderBook from './components/OrderBook.vue'
 import OrderForm from './components/OrderForm.vue'
 import Trades from './components/Trades.vue'
+import InstrumentSelect from './components/InstrumentSelect.vue'
 
 const POLL_INTERVAL_MS = 1000
-const DEFAULT_SYMBOL = 'BTC-USD'
-const QUICK_SYMBOLS = ['BTC-USD', 'ETH-USD']
+const DEFAULT_SYMBOL = 'UBSG'
 const STORAGE_KEY = 'order-book.my-orders.v1'
 const MAX_STORED_ORDERS = 50
 
 const symbol = ref(DEFAULT_SYMBOL)
-const symbolInput = ref(DEFAULT_SYMBOL)
 
 const book = ref(null)
 const bookError = ref('')
@@ -72,11 +71,9 @@ watch(orders, (current) => {
 function selectSymbol(next) {
   const normalized = normalizeSymbol(next)
   if (!normalized || normalized === symbol.value) {
-    symbolInput.value = symbol.value
-    return
-  }
-  symbol.value = normalized
-  symbolInput.value = normalized
+  return
+}
+symbol.value = normalized
 }
 
 watch(symbol, () => {
@@ -178,30 +175,7 @@ function refreshAll() {
       </div>
 
       <div class="symbol-picker">
-        <label class="symbol-field">
-          <span>Instrument</span>
-          <input
-            v-model="symbolInput"
-            type="text"
-            maxlength="20"
-            spellcheck="false"
-            autocomplete="off"
-            @keyup.enter="selectSymbol(symbolInput)"
-            @change="selectSymbol(symbolInput)"
-          >
-        </label>
-        <div class="quick">
-          <button
-            v-for="quick in QUICK_SYMBOLS"
-            :key="quick"
-            type="button"
-            class="quick-button"
-            :class="{ active: quick === symbol }"
-            @click="selectSymbol(quick)"
-          >
-            {{ quick }}
-          </button>
-        </div>
+        <InstrumentSelect v-model="symbol" />
         <button type="button" class="refresh" @click="refreshAll">Refresh</button>
       </div>
     </header>
@@ -300,33 +274,6 @@ h1 {
   gap: 0.6rem;
 }
 
-.symbol-field {
-  display: flex;
-  flex-direction: column;
-  gap: 0.15rem;
-  font-size: 0.7rem;
-  color: var(--text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-
-.symbol-field input {
-  width: 9rem;
-  padding: 0.35rem 0.5rem;
-  border: 1px solid var(--border);
-  border-radius: 0.35rem;
-  background: var(--surface);
-  font-size: 0.95rem;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-}
-
-.quick {
-  display: flex;
-  gap: 0.35rem;
-}
-
-.quick-button,
 .refresh {
   padding: 0.35rem 0.6rem;
   border: 1px solid var(--border);
@@ -334,12 +281,7 @@ h1 {
   background: var(--surface);
   color: inherit;
   font-size: 0.8rem;
-}
-
-.quick-button.active {
-  border-color: var(--accent);
-  color: var(--accent);
-  font-weight: 600;
+  height: fit-content;
 }
 
 .banner {
