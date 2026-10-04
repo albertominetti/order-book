@@ -1,0 +1,17 @@
+# Runtime image for the GraalVM native executable of the order-book API.
+# The native binary is produced by .github/workflows/native-image.yml and copied
+# to the build context as ./order-book before this image is built.
+FROM debian:bookworm-slim
+
+WORKDIR /app
+
+# Unprivileged account: the service never runs as root.
+RUN groupadd --system app \
+    && useradd --system --gid app --home-dir /app --shell /usr/sbin/nologin app
+
+COPY order-book /app/order-book
+USER app
+
+EXPOSE 8080
+
+ENTRYPOINT ["/app/order-book"]

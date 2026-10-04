@@ -477,6 +477,32 @@ Every failing request returns the same JSON shape, produced by `GlobalExceptionH
 The old single book endpoints (`GET /api/orderbook`, `GET /api/trades`) are gone and answer
 `404 NOT_FOUND`: every query is now scoped to an instrument.
 
+## Deploy
+
+The API is packaged and run as a container, both from the JVM build and from a GraalVM native image.
+
+### Native image
+
+A GraalVM native image of the API is built and published to GitHub Container Registry (GHCR) by
+[`.github/workflows/native-image.yml`](.github/workflows/native-image.yml). The workflow compiles the
+native executable with `mvn -B -Pnative -DskipTests native:compile`, packages it with
+[`Dockerfile.native`](Dockerfile.native) and pushes it to `ghcr.io/albertominetti/order-book`.
+
+The image is published on every push to `main`, with the tags `native` (the latest build) and
+`native-sha-<short-sha>` (one immutable tag per commit).
+
+```bash
+docker pull ghcr.io/albertominetti/order-book:native
+docker run -p 8080:8080 ghcr.io/albertominetti/order-book:native
+```
+
+The API is then available on <http://localhost:8080>, with Swagger UI at
+<http://localhost:8080/swagger-ui.html>.
+
+Compared with a JVM image the native one is **much smaller**, because it carries no JRE, **starts
+faster**, because it skips the JVM warm-up, and uses **less memory**, because the closed-world
+analysis removes unused code and enables early class initialization.
+
 ## Tests
 
 ```bash
