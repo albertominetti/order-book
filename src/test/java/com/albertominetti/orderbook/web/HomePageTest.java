@@ -17,8 +17,9 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 /**
  * Tests of the landing page served at the root path.
  *
- * <p>It must answer {@code 200} with an HTML body that links to both the interactive documentation
- * and the raw OpenAPI spec, so a browser opening {@code /} finds the documentation right away.</p>
+ * <p>It must answer {@code 200} with an HTML body that links to the single page application, to the
+ * interactive documentation and to the raw OpenAPI spec, so a browser opening {@code /} finds the
+ * web app and the documentation right away.</p>
  */
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -29,12 +30,14 @@ class HomePageTest {
     private MockMvc mockMvc;
 
     @Test
-    @DisplayName("GET / returns the landing page linking to Swagger UI and to the OpenAPI JSON")
+    @DisplayName("GET / returns the landing page linking to the web app and to Swagger UI")
     void landingPageLinksToTheDocumentation() throws Exception {
         mockMvc.perform(get("/"))
                 .andExpect(status().isOk())
                 .andExpect(content().contentTypeCompatibleWith(MediaType.TEXT_HTML))
                 .andExpect(content().string(containsString("<title>Order Book API</title>")))
+                .andExpect(content().string(containsString("<a href=\"/app/\">"
+                        + "Open the web app (Vue 3)</a>")))
                 .andExpect(content().string(containsString("<a href=\"/swagger-ui.html\">"
                         + "API documentation (Swagger UI)</a>")))
                 .andExpect(content().string(containsString("<a href=\"/v3/api-docs\">OpenAPI JSON</a>")));
