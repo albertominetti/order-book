@@ -61,9 +61,11 @@ watch(symbol, () => {
   orders.value = []
   bookError.value = ''
   tradesError.value = ''
-  bookPoller.refresh()
-  tradesPoller.refresh()
-  ordersPoller.refresh()
+  if (!connected.value) {
+    bookPoller.refresh()
+    tradesPoller.refresh()
+    ordersPoller.refresh()
+  }
 })
 
 async function loadBook() {
@@ -117,9 +119,8 @@ const instrumentsPoller = usePoller(loadInstruments, POLL_INTERVAL_MS)
 /**
  * Live push channel over Server-Sent Events, the same payloads the pollers fetch.
  *
- * The pollers keep running, so they are the fallback and the badge in the top bar says which channel
- * is actually live. A `book` event also lands on a symbol whose book did not exist a moment ago, so
- * the panels never blink back to "loading" when a fresh instrument is selected.
+ * When SSE is connected, it is the single source of truth for book, orders and trades.
+ * The REST pollers are stopped. When SSE disconnects, the app falls back to polling.
  */
 const { connected } = useStream(symbol, {
   onBook: (payload) => {
@@ -150,10 +151,30 @@ const { connected } = useStream(symbol, {
     }
     instruments.value = payload
     instrumentsError.value = ''
+  },
+  onStateChange: (isConnected) => {
+    if (isConnected) {
+      bookPoller.stop()
+      tradesPoller.stop()
+      ordersPoller.stop()
+      book.value = null
+      trades.value = []
+      orders.value = []
+      bookError.value = ''
+      tradesError.value = ''
+      bookLoading.value = book.value === null
+    } else {
+      bookPoller.start()
+      tradesPoller.start()
+      ordersPoller.start()
+      bookPoller.refresh()
+      tradesPoller.refresh()
+      ordersPoller.refresh()
+    }
   }
 })
 
-const channelLabel = computed(() => (connected.value ? 'live \u00b7 SSE' : 'polling'))
+const channelLabel = computed(() => (connected.value ? 'live · SSE' : 'polling fallback'))
 
 const channelTitle = computed(() =>
   connected.value
@@ -269,7 +290,7 @@ function refreshAll() {
     </main>
 
     <footer class="footer">
-      <span>{{ connected ? 'Streaming with Server-Sent Events, polling once per second as a fallback.' : 'Polling every second.' }}</span>
+      <span>{{ connected ? 'Streaming with Server-Sent Events, REST polling used only as a fallback.' : 'Polling every second as fallback.' }}</span>
       <a href="/">Landing page</a>
       <a href="/swagger-ui.html">Swagger UI</a>
     </footer>
