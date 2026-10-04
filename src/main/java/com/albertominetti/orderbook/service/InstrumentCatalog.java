@@ -121,13 +121,10 @@ public class InstrumentCatalog {
     // ------------------------------------------------------------------ loading
 
     private static List<InstrumentRef> loadFromClasspath() {
-        ClassPathResource resource = new ClassPathResource(RESOURCE_PATH);
-        try (InputStream stream = resource.getInputStream();
-             BufferedReader reader = new BufferedReader(new InputStreamReader(stream, StandardCharsets.UTF_8))) {
-            return parse(reader);
-        } catch (IOException ex) {
-            throw new UncheckedIOException("cannot read the instrument catalogue " + RESOURCE, ex);
-        }
+        // The catalogue is baked into the code (InstrumentCatalogData) so it is always available,
+        // including inside a GraalVM native image, where a classpath resource would otherwise have
+        // to be registered explicitly via native-image resource hints.
+        return InstrumentCatalogData.ALL;
     }
 
     /**
