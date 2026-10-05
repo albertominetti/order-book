@@ -157,6 +157,7 @@ const { connected } = useStream(symbol, {
       bookPoller.stop()
       tradesPoller.stop()
       ordersPoller.stop()
+      instrumentsPoller.stop()
       book.value = null
       trades.value = []
       orders.value = []
@@ -167,9 +168,11 @@ const { connected } = useStream(symbol, {
       bookPoller.start()
       tradesPoller.start()
       ordersPoller.start()
+      instrumentsPoller.start()
       bookPoller.refresh()
       tradesPoller.refresh()
       ordersPoller.refresh()
+      instrumentsPoller.refresh()
     }
   }
 })

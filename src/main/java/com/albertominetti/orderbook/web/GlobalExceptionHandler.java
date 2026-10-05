@@ -13,6 +13,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.validation.FieldError;
 import org.springframework.web.HttpRequestMethodNotSupportedException;
+import org.springframework.web.context.request.async.AsyncRequestNotUsableException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
@@ -135,10 +136,35 @@ public class GlobalExceptionHandler {
         return build(HttpStatus.METHOD_NOT_ALLOWED, "METHOD_NOT_ALLOWED", ex.getMessage(), request, List.of());
     }
 
+    /**
+     * The client went away in the middle of the response, which on an SSE stream is the normal
+     * outcome of a page reload or of a proxy dropping an idle connection. The connection is gone,
+     * so there is nothing to answer: writing the JSON error body on a {@code text/event-stream}
+     * response is impossible and would only turn a normal disconnect into a logged failure.
+     */
+    @ExceptionHandler(AsyncRequestNotUsableException.class)
+    public void handleClientDisconnected(AsyncRequestNotUsableException ex) {
+        // Intentional no-op: the response cannot be written any more.
+    }
+
     /** Last-resort handler so internal failures still return the standard shape. */
     @ExceptionHandler(Exception.class)
     public ResponseEntity<ProblemDetailResponse> handleUnexpected(Exception ex, HttpServletRequest request) {
+        if (isEventStream(request)) {
+            // No JSON converter matches text/event-stream: answering would fail again, so the
+            // stream is simply left alone, exactly like the disconnect it comes from.
+            return null;
+        }
         return build(HttpStatus.INTERNAL_SERVER_ERROR, "INTERNAL_ERROR", ex.getMessage(), request, List.of());
+    }
+
+    /** The push channels cannot carry the JSON error shape, whatever the failure. */
+    private static boolean isEventStream(HttpServletRequest request) {
+        if (request == null) {
+            return false;
+        }
+        String uri = request.getRequestURI();
+        return uri != null && uri.endsWith("/stream");
     }
 
     private List<ProblemDetailResponse.Violation> violationsOf(HandlerMethodValidationException ex) {
