@@ -697,11 +697,29 @@ existence through `POST /api/orders`, so `GET /api/instruments/{symbol}/orderboo
 `GET /api/instruments/{symbol}/trades` answer the very same empty book and `200` for it, while a
 malformed symbol is still `400 VALIDATION_ERROR` on the stream as well.
 
+This SSE channel is the **UI channel only**: it pushes full-state snapshots (book, orders, trades
+and the instrument list) to browsers, and only when something actually changes. It is ephemeral and
+keeps no history at all, since a subscriber that reconnects simply receives the current state
+again. The append-only event stream for reporting and backend consumers is a separate channel,
+described in [Market events](#market-events-kafka-optional).
+
 ## Market events (Kafka, optional)
 
 The service can publish what happens on the market to a Kafka topic. It is **off by default**: with
 no broker configured the application publishes nothing and does not even try to connect, so the
 REST API and the SSE streams behave exactly as before.
+
+Two distinct outbound channels leave the matching engine, and both are often called "events":
+
+| Channel                                                                                            | What it is                                                                                        |
+|----------------------------------------------------------------------------------------------------------------------------------------------------------------------|--------------------------------------------------------------------------------------------------|
+| **SSE** (`MarketBroadcaster`, `/api/instruments/{symbol}/stream`, `/api/instruments/stream`) | UI live view for the **browser**: full-state snapshots pushed on change, ephemeral, no history  |
+| **Kafka events** (`events` package, topic `order-events`)                                   | Reporting stream for **backend systems**: append-only facts, keyed by symbol, replayable       |
+
+The SSE channel is a transient view of the current state for the browser, while the Kafka channel
+is a durable, ordered and replayable log of what happened, keyed by symbol and consumed by backend
+systems, **not** by the browser. The two are **independent**: the SSE channel is unchanged, and the
+Kafka stream is purely additive on top of it.
 
 Three events are emitted:
 

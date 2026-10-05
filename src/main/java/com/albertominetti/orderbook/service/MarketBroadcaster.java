@@ -40,6 +40,9 @@ import java.util.function.Supplier;
  * <p>This component is purely additive: it only writes to whoever subscribed, so a broken subscriber
  * can never affect a matching engine or a REST response. Publishing never throws, it only drops the
  * subscribers that cannot be written to.</p>
+ *
+ * <p>This is the UI channel: full-state snapshots for browsers. The append-only event stream for
+ * reporting consumers is separate, see {@link com.albertominetti.orderbook.events}.</p>
  */
 @Component
 public class MarketBroadcaster {

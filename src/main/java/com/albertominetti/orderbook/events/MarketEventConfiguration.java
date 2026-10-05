@@ -14,6 +14,10 @@ import tools.jackson.databind.ObjectMapper;
  * otherwise the no-op adapter is. The two conditions are mutually exclusive, so exactly one
  * {@link MarketEventPublisher} bean exists in either case and no bean of the other kind is even
  * built: with events disabled nothing can reach a broker, and nothing connects to one.</p>
+ *
+ * <p>This is the reporting/event channel: append-only facts for backend consumers, independent of
+ * the SSE UI channel served by
+ * {@link com.albertominetti.orderbook.service.MarketBroadcaster}.</p>
  */
 @Configuration
 public class MarketEventConfiguration {
