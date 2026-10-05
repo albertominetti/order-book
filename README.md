@@ -743,6 +743,13 @@ Three environment variables drive it:
 | `KAFKA_EVENTS_ENABLED`    | `false`         | `true` switches the Kafka adapter on                 |
 | `KAFKA_BOOTSTRAP_SERVERS` | *(empty)*       | `host:port` list of brokers, for example `localhost:9092` |
 | `KAFKA_EVENTS_TOPIC`      | `order-events`  | topic the events are published to                    |
+| `KAFKA_SECURITY_PROTOCOL` | `PLAINTEXT` | `SASL_SSL` for a broker that authenticates (e.g. Redpanda Cloud) |
+| `KAFKA_SASL_MECHANISM`    | *(empty)*   | `SCRAM-SHA-256` with `SASL_SSL` |
+| `KAFKA_SASL_JAAS_CONFIG`  | *(empty)*   | the JAAS login config, e.g. `org.apache.kafka.common.security.scram.ScramLoginModule required username="..." password="...";` |
+
+For a broker that requires SASL (for example Redpanda Cloud, which needs `SASL_SSL` with
+`SCRAM-SHA-256`), set these three variables; the username and password belong in `KAFKA_SASL_JAAS_CONFIG`
+and should be supplied as secrets, never committed to the repository.
 
 ```bash
 KAFKA_EVENTS_ENABLED=true KAFKA_BOOTSTRAP_SERVERS=localhost:9092 mvn spring-boot:run

@@ -13,6 +13,11 @@ spring:
   kafka:
     # Empty by default: with no broker the app still runs and no connection is attempted.
     bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:}
+    properties:
+      # SASL/SCRAM over TLS, for example for Redpanda Cloud. Plaintext, unauthenticated when unset.
+      security.protocol: ${KAFKA_SECURITY_PROTOCOL:PLAINTEXT}
+      sasl.mechanism: ${KAFKA_SASL_MECHANISM:}
+      sasl.jaas.config: ${KAFKA_SASL_JAAS_CONFIG:}
     producer:
       key-serializer: org.apache.kafka.common.serialization.StringSerializer
       value-serializer: org.apache.kafka.common.serialization.StringSerializer
