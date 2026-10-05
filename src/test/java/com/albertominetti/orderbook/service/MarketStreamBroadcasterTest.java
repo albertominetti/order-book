@@ -33,7 +33,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * <p>Subscribers are {@link RecordingEmitter}s handed out by a {@link CapturingBroadcaster}, so the
  * events are inspected directly instead of going through a servlet container.</p>
  */
-class MarketBroadcasterTest {
+class MarketStreamBroadcasterTest {
 
     private static final String SYMBOL = "BTC-USD";
 
@@ -262,7 +262,7 @@ class MarketBroadcasterTest {
     }
 
     /** A broadcaster whose emitters record what is written to them instead of writing it out. */
-    private static final class CapturingBroadcaster extends MarketBroadcaster {
+    private static final class CapturingBroadcaster extends MarketStreamBroadcaster {
 
         private final List<RecordingEmitter> created = new CopyOnWriteArrayList<>();
         private boolean alwaysFail;

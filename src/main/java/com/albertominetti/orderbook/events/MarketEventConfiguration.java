@@ -15,9 +15,10 @@ import tools.jackson.databind.ObjectMapper;
  * {@link MarketEventPublisher} bean exists in either case and no bean of the other kind is even
  * built: with events disabled nothing can reach a broker, and nothing connects to one.</p>
  *
- * <p>This is the reporting/event channel: append-only facts for backend consumers, independent of
- * the SSE UI channel served by
- * {@link com.albertominetti.orderbook.service.MarketBroadcaster}.</p>
+ * <p>This is the reporting event stream: append-only facts for backend consumers, independent of
+ * the SSE stream channel to the UI served by
+ * {@link com.albertominetti.orderbook.service.MarketStreamBroadcaster}, which pushes full-state
+ * snapshots to browsers instead.</p>
  */
 @Configuration
 public class MarketEventConfiguration {

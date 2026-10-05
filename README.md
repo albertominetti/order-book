@@ -177,7 +177,7 @@ src/main/java/com/albertominetti/orderbook
 │   ├── MarketRegistry            one engine per symbol, created lazily
 │   ├── InstrumentCatalog         instrument catalogue loaded from instruments.tsv, searched by symbol or name
 │   ├── OrderService              application facade, routes every request by symbol
-│   ├── MarketBroadcaster         fan-out of the book, trade tape and instrument list to the SSE subscribers
+│   ├── MarketStreamBroadcaster    stream channel to the UI: fan-out of the book, trade tape and instrument list to the SSE subscribers
 │   └── EngineConfiguration       Spring wiring of the Clock
 ├── events/                       Optional market event publication (ports and adapters)
 │   ├── MarketEventType           ORDER_ACCEPTED, ORDER_CANCELLED, TRADE_EXECUTED
@@ -236,7 +236,7 @@ frontend/                            Vue 3 + Vite single page application (built
 src/test/java/com/albertominetti/orderbook
 ├── engine/MatchingEngineTest.java
 ├── service/MarketRegistryTest.java
-├── service/MarketBroadcasterTest.java
+├── service/MarketStreamBroadcasterTest.java
 ├── service/InstrumentCatalogTest.java
 ├── web/OrderApiIntegrationTest.java
 ├── web/MarketStreamApiTest.java
@@ -286,8 +286,8 @@ src/test/java/com/albertominetti/orderbook
   recent trades.
 - **Clock injection.** Engines take a `java.time.Clock` (a `Clock.systemUTC()` bean from
   `EngineConfiguration`), which lets tests produce deterministic timestamps.
-- **An instrument nobody has traded on is an empty state, on both channels.** `MarketBroadcaster` fans
-  out to one set of `SseEmitter` per symbol plus one set for the instrument list, and it publishes the
+- **An instrument nobody has traded on is an empty state, on both channels.** `MarketStreamBroadcaster`
+  fans out to one set of `SseEmitter` per symbol plus one set for the instrument list, and it publishes the
   very same response records the REST endpoints return, so both channels carry the same JSON. A stream
   can be opened for any well formed symbol: `subscribeBook` registers the subscriber even when no order
   has created the engine yet and pushes an empty book, an empty order list and an empty trade tape, so
@@ -697,10 +697,10 @@ existence through `POST /api/orders`, so `GET /api/instruments/{symbol}/orderboo
 `GET /api/instruments/{symbol}/trades` answer the very same empty book and `200` for it, while a
 malformed symbol is still `400 VALIDATION_ERROR` on the stream as well.
 
-This SSE channel is the **UI channel only**: it pushes full-state snapshots (book, orders, trades
-and the instrument list) to browsers, and only when something actually changes. It is ephemeral and
-keeps no history at all, since a subscriber that reconnects simply receives the current state
-again. The append-only event stream for reporting and backend consumers is a separate channel,
+This SSE channel is the **stream channel for the UI only**: it pushes full-state snapshots (book,
+orders, trades and the instrument list) to browsers, and only when something actually changes. It is
+ephemeral and keeps no history at all, since a subscriber that reconnects simply receives the current
+state again. The append-only event stream for reporting and backend consumers is a separate channel,
 described in [Market events](#market-events-kafka-optional).
 
 ## Market events (Kafka, optional)
@@ -713,10 +713,10 @@ Two distinct outbound channels leave the matching engine, and both are often cal
 
 | Channel                                                                                            | What it is                                                                                        |
 |----------------------------------------------------------------------------------------------------------------------------------------------------------------------|--------------------------------------------------------------------------------------------------|
-| **SSE** (`MarketBroadcaster`, `/api/instruments/{symbol}/stream`, `/api/instruments/stream`) | UI live view for the **browser**: full-state snapshots pushed on change, ephemeral, no history  |
-| **Kafka events** (`events` package, topic `order-events`)                                   | Reporting stream for **backend systems**: append-only facts, keyed by symbol, replayable       |
+| **SSE** (`MarketStreamBroadcaster`, `/api/instruments/{symbol}/stream`, `/api/instruments/stream`) | Stream channel for the **browser**: full-state snapshots pushed on change, ephemeral, no history |
+| **Kafka events** (`events` package, topic `order-events`)                                   | Event stream for **backend systems**: append-only facts, keyed by symbol, replayable       |
 
-The SSE channel is a transient view of the current state for the browser, while the Kafka channel
+The SSE channel is a transient stream of the current state for the browser, while the Kafka channel
 is a durable, ordered and replayable log of what happened, keyed by symbol and consumed by backend
 systems, **not** by the browser. The two are **independent**: the SSE channel is unchanged, and the
 Kafka stream is purely additive on top of it.
@@ -905,7 +905,7 @@ routing:
   unknown instrument, malformed symbols rejected without creating an instrument, sixteen threads
   racing on the first order of a new symbol, and the isolation guarantee that two symbols never match
   even at the same price while the same symbol does.
-- `MarketBroadcasterTest`: what a subscriber receives on subscription (the current book and tape, an
+- `MarketStreamBroadcasterTest`: what a subscriber receives on subscription (the current book and tape, an
   empty book and an empty tape for a symbol without one, the real state after its first order), that a
   publish reaches the subscribers of one symbol only, the keep-alive comment, and that completion,
   timeout, error or a broken write all unregister a subscriber without affecting the others.

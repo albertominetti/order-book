@@ -9,8 +9,8 @@ import org.springframework.scheduling.annotation.EnableScheduling;
  * Entry point of the in-memory order book / matching engine REST API.
  *
  * <p>Scheduling is enabled for the single keep-alive task of
- * {@link com.albertominetti.orderbook.service.MarketBroadcaster}, which keeps the Server-Sent
- * Events streams alive through idle periods and proxies.</p>
+ * {@link com.albertominetti.orderbook.service.MarketStreamBroadcaster}, which keeps the Server-Sent
+ * Events stream channel to the UI alive through idle periods and proxies.</p>
  */
 @SpringBootApplication
 @EnableScheduling

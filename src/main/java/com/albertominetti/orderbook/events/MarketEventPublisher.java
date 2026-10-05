@@ -7,9 +7,10 @@ package com.albertominetti.orderbook.events;
  * and the adapter in use is decided at configuration time (see
  * {@link MarketEventConfiguration}).</p>
  *
- * <p>This is the reporting/event channel: append-only facts for backend consumers, independent of
- * the SSE UI channel served by
- * {@link com.albertominetti.orderbook.service.MarketBroadcaster}.</p>
+ * <p>This is the reporting event stream: append-only facts for backend consumers, independent of
+ * the SSE stream channel to the UI served by
+ * {@link com.albertominetti.orderbook.service.MarketStreamBroadcaster}, which pushes full-state
+ * snapshots to browsers instead.</p>
  */
 public interface MarketEventPublisher {
 
