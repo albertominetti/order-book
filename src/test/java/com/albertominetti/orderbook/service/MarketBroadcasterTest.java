@@ -6,6 +6,8 @@ import com.albertominetti.orderbook.domain.Side;
 import com.albertominetti.orderbook.dto.CreateOrderRequest;
 import com.albertominetti.orderbook.dto.OrderBookResponse;
 import com.albertominetti.orderbook.dto.OrderResponse;
+import com.albertominetti.orderbook.events.MarketEventEmitter;
+import com.albertominetti.orderbook.events.NoOpMarketEventPublisher;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -40,7 +42,10 @@ class MarketBroadcasterTest {
 
     @BeforeEach
     void setUp() {
-        orderService = new OrderService(new MarketRegistry(Clock.systemUTC()));
+        Clock clock = Clock.systemUTC();
+        // Events are not the subject of this test: published into a no-op publisher.
+        MarketEventEmitter events = new MarketEventEmitter(new NoOpMarketEventPublisher(), clock);
+        orderService = new OrderService(new MarketRegistry(clock), events);
         broadcaster = new CapturingBroadcaster(orderService);
         submit(SYMBOL, "BUY", "100.00", "2");
     }
