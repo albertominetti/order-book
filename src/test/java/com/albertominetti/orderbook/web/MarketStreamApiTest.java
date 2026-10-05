@@ -212,8 +212,7 @@ class MarketStreamApiTest {
 
         String location = created.getResponse().getHeader("Location");
         mockMvc.perform(delete(location))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.status").value("CANCELLED"));
+                .andExpect(status().isNoContent());
 
         mockMvc.perform(get("/api/instruments/BTC-USD/orderbook"))
                 .andExpect(status().isOk())
@@ -263,8 +262,7 @@ class MarketStreamApiTest {
         String afterSubscribe = wire(stream);
 
         mockMvc.perform(delete(created.getResponse().getHeader("Location")))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.status").value("CANCELLED"));
+                .andExpect(status().isNoContent());
 
         // One more book event, and no trade event: a cancellation generates no trade.
         assertThat(wire(stream)).startsWith(afterSubscribe).contains("event:book");

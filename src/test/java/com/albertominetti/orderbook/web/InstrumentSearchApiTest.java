@@ -114,7 +114,7 @@ class InstrumentSearchApiTest {
                 .andExpect(jsonPath("$.code").value("VALIDATION_ERROR"))
                 .andExpect(jsonPath("$.violations[0].field").value("limit"))
                 .andExpect(jsonPath("$.violations[0].message").value("limit must be at least 1"))
-                .andExpect(jsonPath("$.path").value("/api/instruments/search"));
+                .andExpect(jsonPath("$.instance").value("/api/instruments/search"));
 
         mockMvc.perform(get("/api/instruments/search").param("q", "a").param("limit", "201"))
                 .andExpect(status().isBadRequest())
