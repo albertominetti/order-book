@@ -61,3 +61,13 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+      - name: Trigger the Render production deploy
+        if: github.ref == 'refs/heads/main'
+        env:
+          RENDER_DEPLOY_HOOK: ${{ secrets.RENDER_DEPLOY_HOOK }}
+        run: |
+          if [ -z "${RENDER_DEPLOY_HOOK}" ]; then
+            echo "RENDER_DEPLOY_HOOK secret is not configured: skipping the production deploy."
+            exit 0
+          fi
+          curl -fsS -X POST "${RENDER_DEPLOY_HOOK}"
