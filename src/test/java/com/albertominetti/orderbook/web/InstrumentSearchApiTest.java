@@ -114,7 +114,7 @@ class InstrumentSearchApiTest {
                 .andExpect(jsonPath("$.code").value("VALIDATION_ERROR"))
                 .andExpect(jsonPath("$.violations[0].field").value("limit"))
                 .andExpect(jsonPath("$.violations[0].message").value("limit must be at least 1"))
-                .andExpect(jsonPath("$.path").value("/api/instruments/search"));
+                .andExpect(jsonPath("$.instance").value("/api/instruments/search"));
 
         mockMvc.perform(get("/api/instruments/search").param("q", "a").param("limit", "201"))
                 .andExpect(status().isBadRequest())
@@ -151,9 +151,11 @@ class InstrumentSearchApiTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.length()").value(0));
 
+        // A symbol the search suggested but no order reached is an empty book, not a 404.
         mockMvc.perform(get("/api/instruments/NOPE/orderbook"))
-                .andExpect(status().isNotFound())
-                .andExpect(jsonPath("$.code").value("UNKNOWN_INSTRUMENT"));
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.bids").isEmpty())
+                .andExpect(jsonPath("$.asks").isEmpty());
 
         // Only the instrument created by the order is active, the search suggests symbols only.
         mockMvc.perform(get("/api/instruments"))

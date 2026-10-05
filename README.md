@@ -34,6 +34,8 @@ Useful paths on both: `/api/instruments`, and the API documentation at `/swagger
 - List of active instruments with their stats.
 - Instrument catalogue search over the Swiss SIX names and the S&P 500 constituents.
 - Recent trades tape per instrument.
+- Server-Sent Events streams per instrument and for the instrument list, openable for **any** valid
+  symbol because an empty book is streamed until the first order.
 - Symbol normalization (trim + upper-case) and shape validation.
 - Validation and consistent error responses (`201`, `200`, `400`, `404`, `405`, `422`).
 - Thread-safe: every engine has its own lock, so instruments never block each other.
@@ -173,12 +175,15 @@ src/main/java/com/albertominetti/orderbook
 │   ├── MarketRegistry            one engine per symbol, created lazily
 │   ├── InstrumentCatalog         instrument catalogue loaded from instruments.tsv, searched by symbol or name
 │   ├── OrderService              application facade, routes every request by symbol
+│   ├── MarketBroadcaster         fan-out of the book, trade tape and instrument list to the SSE subscribers
 │   └── EngineConfiguration       Spring wiring of the Clock
 ├── web/
 │   ├── OrderController           REST endpoints
+│   ├── MarketStreamController    Server-Sent Events endpoints
 │   ├── HomeController            landing page at /, links to the web app and the documentation
 │   ├── SpaController             forwards /app to the built Vue application
-│   └── GlobalExceptionHandler    maps exceptions to HTTP responses
+│   ├── FlowIdFilter              propagates the X-Flow-ID header (generating it when absent)
+│   └── GlobalExceptionHandler    maps exceptions to RFC 7807 problem+json responses
 ├── dto/                          request/response records
 │   ├── CreateOrderRequest        order payload, symbol included
 │   ├── MatchResponse             order + trades returned by POST /api/orders
@@ -187,7 +192,7 @@ src/main/java/com/albertominetti/orderbook
 │   ├── PriceLevelResponse        one aggregated price level
 │   ├── OrderBookResponse         book snapshot of one instrument
 │   ├── InstrumentStatsResponse   one instrument in the instrument list
-│   └── ApiErrorResponse          the single error shape
+│   └── ProblemDetailResponse     RFC 7807 problem body, served as application/problem+json
 └── exception/                    domain exceptions
     ├── InvalidOrderException     business rule broken       -> 400
     ├── OrderNotFoundException    unknown order id           -> 404
@@ -209,6 +214,7 @@ frontend/                            Vue 3 + Vite single page application (built
     ├── App.vue                      layout, instrument selection, polling and order state
     ├── api.js                       fetch wrapper over the relative /api paths, normalizes errors
     ├── usePoller.js                 one request in flight per stream, stops with the component
+    ├── useStream.js                 SSE streams (book, trades, instruments) and the connected flag
     └── components/
         ├── InstrumentSelect.vue     instrument picker, debounced search over the catalogue
         ├── OrderForm.vue            LIMIT/MARKET order entry
@@ -220,10 +226,13 @@ frontend/                            Vue 3 + Vite single page application (built
 src/test/java/com/albertominetti/orderbook
 ├── engine/MatchingEngineTest.java
 ├── service/MarketRegistryTest.java
+├── service/MarketBroadcasterTest.java
 ├── service/InstrumentCatalogTest.java
 ├── web/OrderApiIntegrationTest.java
+├── web/MarketStreamApiTest.java
 ├── web/MultiInstrumentApiTest.java
 ├── web/InstrumentSearchApiTest.java
+├── web/ZalandoGuidelinesApiTest.java
 ├── web/HomePageTest.java
 └── web/SpaRoutingTest.java
 ```
@@ -267,6 +276,17 @@ src/test/java/com/albertominetti/orderbook
   recent trades.
 - **Clock injection.** Engines take a `java.time.Clock` (a `Clock.systemUTC()` bean from
   `EngineConfiguration`), which lets tests produce deterministic timestamps.
+- **An instrument nobody has traded on is an empty state, on both channels.** `MarketBroadcaster` fans
+  out to one set of `SseEmitter` per symbol plus one set for the instrument list, and it publishes the
+  very same response records the REST endpoints return, so both channels carry the same JSON. A stream
+  can be opened for any well formed symbol: `subscribeBook` registers the subscriber even when no order
+  has created the engine yet and pushes an empty book, an empty order list and an empty trade tape, so
+  a client that selects a fresh instrument is never answered with an error that would send it back to
+  polling. The query endpoints agree: `GET /api/instruments/{symbol}/orderbook` and
+  `GET /api/instruments/{symbol}/trades` answer `200` with that very same empty book and tape. Only a
+  malformed symbol is an error, `400`, on either channel. Publishing is purely additive and never
+  throws: a subscriber that cannot be written to is dropped and completes, and cannot slow a matching
+  engine down.
 
 ## How the matching works
 
@@ -340,9 +360,13 @@ What it does:
 - keep the orders submitted from the browser and cancel them with `DELETE /api/orders/{id}`, with a
   table that fits on a phone: below 600px each order becomes a card and the Cancel button gets its
   own full width row, above it the table sits in a horizontally scrollable container;
-- poll every stream once per second, never with more than one request in flight per stream, and stop
-  polling when the page is left;
-- show an empty state per panel and the `code` and `message` of the uniform API error payload when a
+  - receive the book, the trade tape and the instrument list over Server-Sent Events with the native
+  `EventSource`. When the stream is connected, it is the single source of truth for the order book,
+  orders and trades and REST polling is stopped; when it disconnects, the app falls back to REST
+  polling. The badge in the top bar shows which channel is live: `live · SSE` while the stream is
+  connected, `polling fallback` when it is not. The per-symbol stream can be opened for any valid
+  symbol, so an instrument without a book streams an empty book straight away instead of failing;
+  - show an empty state per panel and the `code` and `message` of the uniform API error payload when a
   call fails.
 
 All calls use relative `/api` paths, so the app always talks to the same origin that served it: no
@@ -373,17 +397,22 @@ of the dev server is packaged: `npm run build` writes the production bundle to t
 
 ## REST API
 
-Base path: `/api`. All payloads are JSON.
+Base path: `/api`. All payloads are JSON, except the RFC 7807 errors, which are
+`application/problem+json` (see [Error handling](#error-handling)). JSON property names and query
+parameter names are lowerCamelCase: this is a deliberate deviation from the Zalando snake_case
+convention, kept for consistency with the rest of the API.
 
 | Method   | Path                                        | Success | Purpose                                     |
 |----------|---------------------------------------------|---------|---------------------------------------------|
 | `POST`   | `/api/orders`                               | `201`   | Submit an order on an instrument            |
 | `GET`    | `/api/orders/{id}`                          | `200`   | Fetch one order of any instrument           |
-| `DELETE` | `/api/orders/{id}`                          | `200`   | Cancel a resting order                      |
+| `DELETE` | `/api/orders/{id}`                          | `204`   | Cancel a resting order                      |
 | `GET`    | `/api/instruments`                          | `200`   | List active instruments with their stats    |
 | `GET`    | `/api/instruments/search?q=&limit=`         | `200`   | Search the instrument catalogue             |
 | `GET`    | `/api/instruments/{symbol}/orderbook`       | `200`   | Book snapshot of one instrument             |
 | `GET`    | `/api/instruments/{symbol}/trades?limit=`   | `200`   | Recent trades of one instrument             |
+| `GET`    | `/api/instruments/{symbol}/stream`          | `200`   | SSE stream of one instrument (see below)    |
+| `GET`    | `/api/instruments/stream`                   | `200`   | SSE stream of the instrument list           |
 
 ### POST /api/orders
 
@@ -461,8 +490,9 @@ curl -s http://localhost:8080/api/orders/6f1c1e2a-1c2b-4c3d-9e8f-0a1b2c3d4e5f
 ### DELETE /api/orders/{id}
 
 Cancel an order that is still resting on the book of its own instrument. The request is routed to that
-instrument only, so the books of the other instruments are untouched. Returns the cancelled order with
-status `CANCELLED`.
+instrument only, so the books of the other instruments are untouched. Answers `204 No Content` with an
+empty body: the new state is pushed on the SSE stream and can be read again with
+`GET /api/orders/{id}`.
 
 `422 INVALID_ORDER_STATE` when the order cannot be cancelled: it is already `FILLED` or already
 `CANCELLED`, or it is a MARKET order that never rests. `404 NOT_FOUND` when the id is unknown.
@@ -513,8 +543,8 @@ is how the dropdown opens on the Swiss names. The optional `limit` accepts 1 to 
 50.
 
 Searching the catalogue never creates anything: an instrument only exists as a tradable book once an
-order has been submitted for it, so a symbol returned here can still answer
-`404 UNKNOWN_INSTRUMENT` on `/api/instruments/{symbol}/orderbook`.
+order has been submitted for it, so a symbol returned here still answers an **empty** book on
+`/api/instruments/{symbol}/orderbook`.
 
 ```bash
 curl -s 'http://localhost:8080/api/instruments/search?q=ubs&limit=10'
@@ -595,6 +625,58 @@ curl -s 'http://localhost:8080/api/instruments/BTC-USD/trades?limit=20'
 A `limit` outside 1 to 1000 is rejected with `400 VALIDATION_ERROR`, a non numeric `limit` with
 `400 INVALID_PARAMETER`.
 
+## Server-Sent Events streams
+
+The push counterpart of the two query endpoints above, an addition and never a replacement: the same
+response records are pushed as events, so a client reuses one parser for both channels and simply
+falls back to polling if a stream cannot be opened.
+
+| Method | Path                              | Event            | Payload                          |
+|--------|-----------------------------------|------------------|----------------------------------|
+| `GET`  | `/api/instruments/{symbol}/stream` | `book`           | Same as `/orderbook`             |
+| `GET`  | `/api/instruments/{symbol}/stream` | `trades`         | Same as `/trades?limit=20`       |
+| `GET`  | `/api/instruments/stream`          | `instruments`    | Same as `/api/instruments`       |
+
+Both endpoints answer `200` with content type `text/event-stream` and keep the response open. On
+subscription the current state is pushed immediately, so a fresh subscriber is never blank, and a
+keep-alive comment is sent every 20 seconds so an idle connection survives proxies. Afterwards the
+book and the trade tape are pushed again after every submission and cancellation on that symbol, and
+the instrument list after every submission or cancellation anywhere.
+
+```bash
+curl -N http://localhost:8080/api/instruments/BTC-USD/stream
+```
+
+```
+event:book
+data:{"bids":[{"price":200.00,"quantity":7,"orderCount":2}],"asks":[{"price":200.50,"quantity":1,"orderCount":1}],"bestBid":200.00,"bestAsk":200.50,"spread":0.50}
+
+event:trades
+data:[{"id":"8a2b3c4d-5e6f-4a1b-8c9d-0e1f2a3b4c5d","symbol":"BTC-USD","buyOrderId":"1a2b3c4d-5e6f-4a1b-8c9d-0e1f2a3b4c5d","sellOrderId":"2b3c4d5e-6f7a-4b1c-9d0e-1f2a3b4c5d6e","price":200.50,"quantity":2,"timestamp":"2026-10-04T09:00:05Z"}]
+```
+
+### A stream is openable for any valid symbol
+
+`GET /api/instruments/{symbol}/stream` accepts **any** valid symbol, even one no order has reached
+yet, so the live channel is usable immediately on a fresh instrument (`UBSG`, for instance, before
+the first submission). Such a subscriber is registered like any other and receives an **empty book**
+plus an **empty trade tape** right away:
+
+```
+event:book
+data:{"bids":[],"asks":[]}
+
+event:trades
+data:[]
+```
+
+No bid, no ask, and no `bestBid`, `bestAsk`, `spread` or `lastPrice` either, since those fields are
+omitted when they do not exist. The real state arrives with the very first order on that symbol, on
+the stream that is already open. Opening a stream creates nothing: an instrument still only comes into
+existence through `POST /api/orders`, so `GET /api/instruments/{symbol}/orderbook` and
+`GET /api/instruments/{symbol}/trades` answer the very same empty book and `200` for it, while a
+malformed symbol is still `400 VALIDATION_ERROR` on the stream as well.
+
 ## Symbol rules
 
 A symbol identifies a tradable instrument and is required everywhere.
@@ -604,28 +686,35 @@ A symbol identifies a tradable instrument and is required everywhere.
 - After normalization it must match `[A-Z0-9][A-Z0-9._-]{0,19}`: one to twenty characters, starting
   with a letter or a digit, then letters, digits, dots, underscores and dashes.
 - A **missing or malformed** symbol is `400 VALIDATION_ERROR`, with a `symbol` entry in `violations`.
-- A **well formed but unknown** symbol on a query endpoint (`orderbook` or `trades`) is
-  `404 UNKNOWN_INSTRUMENT`, because no order has ever created that book. `POST /api/orders` is the
-  only way to bring an instrument into existence.
+- A **well formed but unknown** symbol is never an error, on the query endpoints (`orderbook` and
+  `trades`) nor on the **stream** endpoints: both answer their empty state, the query endpoints with
+  `200` and an empty book or tape, a stream with an empty book until the first order.
+  `POST /api/orders` is the only way to bring an instrument into existence.
 
 ## Error handling
 
-Every failing request returns the same JSON shape, produced by `GlobalExceptionHandler`:
+Every failing request is an [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807) problem detail, served
+with `Content-Type: application/problem+json` and produced by `GlobalExceptionHandler`:
 
 ```json
 {
-  "timestamp": "2026-10-04T09:00:00Z",
+  "type": "about:blank",
+  "title": "Bad Request",
   "status": 400,
-  "error": "Bad Request",
+  "detail": "invalid request: quantity quantity must be greater than 0",
+  "instance": "/api/orders",
   "code": "VALIDATION_ERROR",
-  "message": "invalid request: quantity quantity must be greater than 0",
-  "path": "/api/orders",
+  "flowId": "3f1b7c58-0000-4000-8000-00000000dead",
   "violations": [{"field": "quantity", "message": "quantity must be greater than 0"}]
 }
 ```
 
-`violations` is omitted when empty, because Jackson is configured with
-`default-property-inclusion: non_null`. The `code` is stable and machine-readable:
+Besides the five standard members (`type`, `title`, `status`, `detail`, `instance`) it carries two
+extensions: `code`, a stable machine-readable error code, and `violations`, the field-level validation
+details. `flowId` repeats the `X-Flow-ID` response header. `instance` and `flowId` are omitted when
+they have no value (Jackson is configured with `default-property-inclusion: non_null`); `violations`
+is always present and is an empty array when there is nothing to report. The `code` is stable and
+machine-readable:
 
 | Code                   | Status | Raised when                                                           |
 |------------------------|--------|-----------------------------------------------------------------------|
@@ -634,13 +723,35 @@ Every failing request returns the same JSON shape, produced by `GlobalExceptionH
 | `INVALID_PARAMETER`    | `400`  | A parameter has an invalid value, for example a non UUID order id    |
 | `INVALID_ORDER`        | `400`  | A business rule was broken, for example a LIMIT order without a price |
 | `NOT_FOUND`            | `404`  | Unknown order id or unknown path                                      |
-| `UNKNOWN_INSTRUMENT`   | `404`  | A well formed symbol that has no book yet                             |
 | `METHOD_NOT_ALLOWED`   | `405`  | Unsupported HTTP method on an existing path                           |
 | `INVALID_ORDER_STATE`  | `422`  | A well formed request that breaks the order lifecycle, for example cancelling a filled order |
 | `INTERNAL_ERROR`       | `500`  | Last resort handler, so internal failures keep the standard shape     |
 
+### X-Flow-ID
+
+Every response carries an `X-Flow-ID` header. When the client sends one it is reused verbatim,
+otherwise the server generates a fresh UUID. The same value is repeated in the `flowId` member of the
+problem JSON, so a failing request can be correlated between the body and the logs:
+
+```bash
+curl -s -i -H 'X-Flow-ID: my-trace-42' http://localhost:8080/api/orders/00000000-0000-0000-0000-000000000000
+```
+
+### Deviations from the Zalando guidelines
+
+This API follows the [Zalando RESTful API guidelines](https://opensource.zalando.com/restful-api-guidelines/)
+for errors (RFC 7807, `application/problem+json`), for status codes (`201` with a `Location` header on
+create, `204` on delete) and for the `X-Flow-ID` header, with two deliberate deviations:
+
+- JSON property names and query parameter names stay in **lowerCamelCase** instead of the Zalando
+  **snake_case**, to stay consistent with the rest of the API and with the JavaScript client.
+- every endpoint is served under the **`/api` base path**, kept for backward compatibility with the
+  existing clients and links.
+
 The old single book endpoints (`GET /api/orderbook`, `GET /api/trades`) are gone and answer
-`404 NOT_FOUND`: every query is now scoped to an instrument.
+`404 NOT_FOUND`: every query is now scoped to an instrument. `UNKNOWN_INSTRUMENT`, the code
+`MarketRegistry.engineOrThrow` raises, is not part of the API contract any more: the per-instrument
+`orderbook` and `trades` endpoints answer an empty state instead of a missing resource.
 
 ## Deploy
 
@@ -687,6 +798,14 @@ routing:
   unknown instrument, malformed symbols rejected without creating an instrument, sixteen threads
   racing on the first order of a new symbol, and the isolation guarantee that two symbols never match
   even at the same price while the same symbol does.
+- `MarketBroadcasterTest`: what a subscriber receives on subscription (the current book and tape, an
+  empty book and an empty tape for a symbol without one, the real state after its first order), that a
+  publish reaches the subscribers of one symbol only, the keep-alive comment, and that completion,
+  timeout, error or a broken write all unregister a subscriber without affecting the others.
+- `MarketStreamApiTest`: end-to-end tests of the two stream endpoints: `200 text/event-stream` on an
+  open async request, any valid symbol streaming an empty book (never a `404`), the first order
+  replacing that empty book on the already open stream, a malformed symbol still `400`, and the REST
+  endpoints answering unchanged while a stream receives every publish.
 - `InstrumentCatalogTest`: the parser skips the header and the truncated lines, a blank query returns
   the default slice in catalogue order, symbol prefix matches rank before name matches and both are
   case insensitive, the limit caps the results, and the shipped catalogue really holds the 47 SIX
@@ -711,3 +830,4 @@ The frontend build runs in the `generate-resources` phase, therefore every `mvn 
 ## License
 
 MIT. See [LICENSE](LICENSE).
+

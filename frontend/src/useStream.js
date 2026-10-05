@@ -2,6 +2,7 @@ import { onScopeDispose, ref, watch } from 'vue'
 
 const BOOK_EVENT = 'book'
 const TRADES_EVENT = 'trades'
+const ORDERS_EVENT = 'orders'
 const INSTRUMENTS_EVENT = 'instruments'
 
 const INSTRUMENTS_STREAM = '/api/instruments/stream'
@@ -20,17 +21,21 @@ const INSTRUMENTS_STREAM = '/api/instruments/stream'
  * what a REST call would have returned and can be shared by both channels.
  *
  * The reactive `connected` flag is the contract with the caller: while it is true the stream is
- * the primary source of live updates and polling can stand down, and when it turns false the caller
- * falls back to polling. Any stream error, an unknown instrument answering 404, a proxy that drops
- * the connection or a browser without `EventSource` at all closes both streams and flips the flag,
- * so a page never waits for data that is not coming.
+ * the primary source of live updates, and when it turns false the caller falls back to polling. Any
+ * stream error, a proxy that drops the connection or a browser without `EventSource` at all closes
+ * both streams and flips the flag, so a page never waits for data that is not coming.
+ *
+ * Every valid symbol can be streamed, even one with no book yet: that subscriber simply receives an
+ * empty book first, then the real state from the moment the first order creates the instrument.
  *
  * @param {import('vue').Ref<string>} symbol active instrument, watched for changes
  * @param {{
  *   onBook?: (book: object) => void,
  *   onTrades?: (trades: Array<object>) => void,
- *   onInstruments?: (instruments: Array<object>) => void
- * }} [handlers] callbacks for the three events
+ *   onOrders?: (orders: Array<object>) => void,
+ *   onInstruments?: (instruments: Array<object>) => void,
+ *   onStateChange?: (connected: boolean) => void
+ * }} [handlers] callbacks for the events
  * @returns {{ connected: import('vue').Ref<boolean>, connect: () => void, disconnect: () => void }}
  */
 export function useStream(symbol, handlers = {}) {
@@ -88,6 +93,7 @@ export function useStream(symbol, handlers = {}) {
   }
 
   function disconnect() {
+    const wasConnected = connected.value
     closeSource(bookSource)
     closeSource(instrumentsSource)
     bookSource = null
@@ -95,6 +101,13 @@ export function useStream(symbol, handlers = {}) {
     bookOpen = false
     instrumentsOpen = false
     connected.value = false
+    if (wasConnected && typeof handlers.onStateChange === 'function') {
+      try {
+        handlers.onStateChange(false)
+      } catch {
+        // ignore
+      }
+    }
   }
 
   /**
@@ -111,6 +124,13 @@ export function useStream(symbol, handlers = {}) {
   /** True once both streams are established, which is what makes the push channel usable. */
   function markConnected() {
     connected.value = bookOpen && instrumentsOpen
+    if (typeof handlers.onStateChange === 'function') {
+      try {
+        handlers.onStateChange(connected.value)
+      } catch {
+        // ignore
+      }
+    }
   }
 
   function connect() {
@@ -128,6 +148,7 @@ export function useStream(symbol, handlers = {}) {
       instrumentsSource = new EventSource(INSTRUMENTS_STREAM)
 
       listen(bookSource, BOOK_EVENT, handlers.onBook)
+      listen(bookSource, ORDERS_EVENT, handlers.onOrders)
       listen(bookSource, TRADES_EVENT, handlers.onTrades)
       listen(instrumentsSource, INSTRUMENTS_EVENT, handlers.onInstruments)
 

@@ -280,7 +280,7 @@ class OrderApiEdgeCasesTest {
                 .andExpect(status().isUnprocessableEntity())
                 .andExpect(jsonPath("$.status").value(422))
                 .andExpect(jsonPath("$.code").value("INVALID_ORDER_STATE"))
-                .andExpect(jsonPath("$.message")
+                .andExpect(jsonPath("$.detail")
                         .value("order " + marketId + " cannot be cancelled because it is FILLED"));
     }
 
@@ -300,7 +300,7 @@ class OrderApiEdgeCasesTest {
                 .andExpect(status().isUnprocessableEntity())
                 .andExpect(jsonPath("$.status").value(422))
                 .andExpect(jsonPath("$.code").value("INVALID_ORDER_STATE"))
-                .andExpect(jsonPath("$.message")
+                .andExpect(jsonPath("$.detail")
                         .value("order " + marketId + " cannot be cancelled because it is CANCELLED"));
     }
 

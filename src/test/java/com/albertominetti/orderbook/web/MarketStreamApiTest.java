@@ -27,9 +27,10 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * End-to-end tests of the Server-Sent Events endpoints.
  *
  * <p>The contract under test is that a stream answers {@code 200 text/event-stream} and starts an
- * async request that stays open, that an unknown instrument is the very same
- * {@code 404 UNKNOWN_INSTRUMENT} as the order book endpoint, and that the REST endpoints keep
- * answering unchanged while a stream is open and receiving every publish.</p>
+ * async request that stays open, that any valid symbol can be streamed even when no order has created
+ * its book yet (an empty book is pushed, never a 404), that only a malformed symbol is rejected, and
+ * that the REST endpoints keep answering unchanged while a stream is open and receiving every
+ * publish.</p>
  *
  * <p>Like the other integration tests, the context is refreshed before each test, so every test
  * starts with an empty market.</p>
@@ -101,26 +102,77 @@ class MarketStreamApiTest {
         assertThat(broadcaster.subscriberCount()).isEqualTo(3);
     }
 
-    // ------------------------------------------------------------------ rejections
+    // ------------------------------------------------------------------ symbols without a book
 
     @Test
-    @DisplayName("Streaming an unknown instrument is 404 UNKNOWN_INSTRUMENT, as its order book is")
-    void unknownInstrumentIsNotFound() throws Exception {
+    @DisplayName("Streaming any valid symbol opens the stream and pushes an empty book first")
+    void anyValidSymbolStreamsAnEmptyBook() throws Exception {
+        MvcResult result = mockMvc.perform(get("/api/instruments/UBSG/stream"))
+                .andExpect(request().asyncStarted())
+                .andExpect(status().isOk())
+                .andExpect(content().contentTypeCompatibleWith(MediaType.TEXT_EVENT_STREAM))
+                .andReturn();
+
+        assertThat(result.getRequest().isAsyncStarted()).isTrue();
+        assertThat(broadcaster.bookSubscriberCount("UBSG")).isEqualTo(1);
+
+        // No bids, no asks and no price at all: an empty book the client can render right away,
+        // instead of an error that would push it back to polling.
+        assertThat(wire(result))
+                .contains("event:book")
+                .contains("event:trades")
+                .contains("\"bids\":[]")
+                .contains("\"asks\":[]")
+                .doesNotContain("bestBid")
+                .doesNotContain("bestAsk")
+                .doesNotContain("spread")
+                .doesNotContain("lastPrice");
+    }
+
+    @Test
+    @DisplayName("A stream on a symbol without a book creates no instrument and its REST queries are an empty 200")
+    void streamingDoesNotCreateTheInstrumentNorChangeItsRestQueries() throws Exception {
         submit("BTC-USD", "BUY", "100.00", "2").andExpect(status().isCreated());
 
-        mockMvc.perform(get("/api/instruments/NOPE/stream"))
-                .andExpect(status().isNotFound())
-                .andExpect(request().asyncNotStarted())
-                .andExpect(jsonPath("$.status").value(404))
-                .andExpect(jsonPath("$.code").value("UNKNOWN_INSTRUMENT"))
-                .andExpect(jsonPath("$.message").value("unknown instrument 'NOPE'"))
-                .andExpect(jsonPath("$.path").value("/api/instruments/NOPE/stream"));
+        mockMvc.perform(get("/api/instruments/NOPE/stream")).andExpect(status().isOk());
 
-        // A rejected subscription leaves no subscriber behind and creates no instrument.
-        assertThat(broadcaster.subscriberCount()).isZero();
+        // The push channel and the query endpoints agree: an instrument nobody traded on is empty,
+        // not missing, so both REST queries answer 200 with nothing in it.
+        mockMvc.perform(get("/api/instruments/NOPE/orderbook"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.bids").isEmpty())
+                .andExpect(jsonPath("$.asks").isEmpty())
+                .andExpect(jsonPath("$.bestBid").doesNotExist())
+                .andExpect(jsonPath("$.bestAsk").doesNotExist());
+        mockMvc.perform(get("/api/instruments/NOPE/trades"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(0));
+
+        assertThat(broadcaster.subscriberCount()).isEqualTo(1);
         mockMvc.perform(get("/api/instruments"))
                 .andExpect(jsonPath("$.length()").value(1))
                 .andExpect(jsonPath("$[0].symbol").value("BTC-USD"));
+    }
+
+    @Test
+    @DisplayName("The first order on a streamed symbol pushes the book that replaces the empty one")
+    void theFirstOrderReachesASubscriberOfAnEmptySymbol() throws Exception {
+        MvcResult stream = mockMvc.perform(get("/api/instruments/UBSG/stream"))
+                .andExpect(status().isOk())
+                .andReturn();
+        String afterSubscribe = wire(stream);
+
+        submit("UBSG", "BUY", "100.00", "2").andExpect(status().isCreated());
+
+        // The empty book opened the stream, the first order filled it for the very same subscriber.
+        assertThat(wire(stream))
+                .startsWith(afterSubscribe)
+                .contains("\"bestBid\":100.00");
+        assertThat(countOccurrences(wire(stream), "event:book")).isEqualTo(2);
+        assertThat(broadcaster.bookSubscriberCount("UBSG")).isEqualTo(1);
+        mockMvc.perform(get("/api/instruments/UBSG/orderbook"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.bestBid").value(100.00));
     }
 
     @Test
@@ -160,8 +212,7 @@ class MarketStreamApiTest {
 
         String location = created.getResponse().getHeader("Location");
         mockMvc.perform(delete(location))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.status").value("CANCELLED"));
+                .andExpect(status().isNoContent());
 
         mockMvc.perform(get("/api/instruments/BTC-USD/orderbook"))
                 .andExpect(status().isOk())
@@ -211,8 +262,7 @@ class MarketStreamApiTest {
         String afterSubscribe = wire(stream);
 
         mockMvc.perform(delete(created.getResponse().getHeader("Location")))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.status").value("CANCELLED"));
+                .andExpect(status().isNoContent());
 
         // One more book event, and no trade event: a cancellation generates no trade.
         assertThat(wire(stream)).startsWith(afterSubscribe).contains("event:book");

@@ -7,6 +7,7 @@ import com.albertominetti.orderbook.dto.InstrumentStatsResponse;
 import com.albertominetti.orderbook.dto.MatchResponse;
 import com.albertominetti.orderbook.dto.OrderBookResponse;
 import com.albertominetti.orderbook.dto.OrderResponse;
+import com.albertominetti.orderbook.dto.ProblemDetailResponse;
 import com.albertominetti.orderbook.dto.TradeResponse;
 import com.albertominetti.orderbook.engine.MatchingEngine;
 import com.albertominetti.orderbook.exception.OrderNotFoundException;
@@ -20,6 +21,10 @@ import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Pattern;
+import io.swagger.v3.oas.annotations.media.Content;
+import io.swagger.v3.oas.annotations.media.Schema;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import org.springframework.http.ResponseEntity;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -50,6 +55,12 @@ public class OrderController {
     /** Default number of trades returned by the per-instrument trade tape. */
     static final int DEFAULT_TRADE_LIMIT = 50;
 
+    /** Default number of orders returned by the per-instrument orders list. */
+    static final int DEFAULT_ORDER_LIMIT = 50;
+
+    /** Largest number of orders returned by the per-instrument orders list. */
+    static final int MAX_ORDER_LIMIT = 200;
+
     /** Default number of instruments returned by the catalogue search. */
     static final int DEFAULT_INSTRUMENT_SEARCH_LIMIT = 50;
 
@@ -73,6 +84,12 @@ public class OrderController {
      *
      * @return 201 with a {@code Location} header pointing to the new order
      */
+    @ApiResponses({
+            @ApiResponse(responseCode = "201", description = "order accepted; the Location header points to it"),
+            @ApiResponse(responseCode = "400", description = "malformed body or a broken business rule",
+                    content = @Content(mediaType = "application/problem+json",
+                            schema = @Schema(implementation = ProblemDetailResponse.class)))
+    })
     @PostMapping("/orders")
     public ResponseEntity<MatchResponse> submitOrder(@Valid @RequestBody CreateOrderRequest request) {
         MatchResponse response = MatchResponse.from(orderService.submitOrder(request));
@@ -88,6 +105,12 @@ public class OrderController {
      *
      * @throws OrderNotFoundException when the id is unknown (404)
      */
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "the order in its current state"),
+            @ApiResponse(responseCode = "404", description = "no order has this id",
+                    content = @Content(mediaType = "application/problem+json",
+                            schema = @Schema(implementation = ProblemDetailResponse.class)))
+    })
     @GetMapping("/orders/{id}")
     public OrderResponse getOrder(@PathVariable UUID id) {
         return OrderResponse.from(orderService.getOrder(id));
@@ -96,14 +119,24 @@ public class OrderController {
     /**
      * Cancels an order still resting on the book of its own instrument.
      *
+     * @return 204 with no body
      * @throws OrderNotFoundException when the id is unknown (404)
      * @throws OrderStateException    when the order is not resting any more (422)
      */
+    @ApiResponses({
+            @ApiResponse(responseCode = "204", description = "order cancelled; no content"),
+            @ApiResponse(responseCode = "404", description = "no order has this id",
+                    content = @Content(mediaType = "application/problem+json",
+                            schema = @Schema(implementation = ProblemDetailResponse.class))),
+            @ApiResponse(responseCode = "422", description = "the order cannot be cancelled in its state",
+                    content = @Content(mediaType = "application/problem+json",
+                            schema = @Schema(implementation = ProblemDetailResponse.class)))
+    })
     @DeleteMapping("/orders/{id}")
-    public OrderResponse cancelOrder(@PathVariable UUID id) {
+    public ResponseEntity<Void> cancelOrder(@PathVariable UUID id) {
         OrderResponse response = OrderResponse.from(orderService.cancelOrder(id));
         publishBookOnly(response.symbol());
-        return response;
+        return ResponseEntity.noContent().build();
     }
 
     /** Every active instrument with its resting orders, best prices and last price. */
@@ -125,6 +158,9 @@ public class OrderController {
      * @param query free text to match, defaults to blank
      * @param limit how many instruments to return (1..{@value #MAX_INSTRUMENT_SEARCH_LIMIT})
      */
+    @ApiResponse(responseCode = "400", description = "an invalid query parameter",
+            content = @Content(mediaType = "application/problem+json",
+                    schema = @Schema(implementation = ProblemDetailResponse.class)))
     @GetMapping("/instruments/search")
     public List<InstrumentRef> searchInstruments(
             @RequestParam(name = "q", defaultValue = "") String query,
@@ -141,6 +177,9 @@ public class OrderController {
      *
      * @throws UnknownInstrumentException when nothing was ever traded on the symbol (404)
      */
+    @ApiResponse(responseCode = "404", description = "nothing was ever traded on this symbol",
+            content = @Content(mediaType = "application/problem+json",
+                    schema = @Schema(implementation = ProblemDetailResponse.class)))
     @GetMapping("/instruments/{symbol}/orderbook")
     public OrderBookResponse getOrderBook(@PathVariable
                                           @Pattern(regexp = SymbolRules.RAW_PATTERN_SOURCE,
@@ -151,11 +190,39 @@ public class OrderController {
     }
 
     /**
+     * All orders of one instrument, newest first, including filled and cancelled ones.
+     *
+     * @param limit how many orders to return (1..{@value #MAX_ORDER_LIMIT})
+     * @throws IllegalArgumentException when the symbol is missing or malformed (400)
+     */
+    @ApiResponse(responseCode = "400", description = "the symbol is missing or malformed",
+            content = @Content(mediaType = "application/problem+json",
+                    schema = @Schema(implementation = ProblemDetailResponse.class)))
+    @GetMapping("/instruments/{symbol}/orders")
+    public List<OrderResponse> getOrders(
+            @PathVariable
+            @Pattern(regexp = SymbolRules.RAW_PATTERN_SOURCE,
+                    message = "symbol must match " + SymbolRules.PATTERN_SOURCE)
+            @NotBlank(message = "symbol is required")
+            String symbol,
+            @RequestParam(defaultValue = "" + DEFAULT_ORDER_LIMIT)
+            @Min(value = 1, message = "limit must be at least 1")
+            @Max(value = MAX_ORDER_LIMIT, message = "limit must be at most " + MAX_ORDER_LIMIT)
+            int limit) {
+        return orderService.getOrders(symbol, limit).stream()
+                .map(OrderResponse::from)
+                .toList();
+    }
+
+    /**
      * Recent trades of one instrument, newest first.
      *
      * @param limit how many trades to return (1..{@value MatchingEngine#MAX_RECENT_TRADES})
      * @throws UnknownInstrumentException when nothing was ever traded on the symbol (404)
      */
+    @ApiResponse(responseCode = "404", description = "nothing was ever traded on this symbol",
+            content = @Content(mediaType = "application/problem+json",
+                    schema = @Schema(implementation = ProblemDetailResponse.class)))
     @GetMapping("/instruments/{symbol}/trades")
     public List<TradeResponse> getTrades(
             @PathVariable
@@ -184,6 +251,7 @@ public class OrderController {
         String symbol = SymbolRules.normalize(rawSymbol);
         publishBookOnly(symbol);
         broadcaster.publishTrades(symbol, trades);
+        broadcaster.publishOrders(symbol, ordersList(symbol));
     }
 
     /**
@@ -195,7 +263,15 @@ public class OrderController {
     private void publishBookOnly(String rawSymbol) {
         String symbol = SymbolRules.normalize(rawSymbol);
         broadcaster.publishBook(symbol, OrderBookResponse.from(orderService.getBookSnapshot(symbol)));
+        broadcaster.publishOrders(symbol, ordersList(symbol));
         broadcaster.publishInstruments(broadcaster.instrumentStats());
     }
+
+    private List<OrderResponse> ordersList(String symbol) {
+        return orderService.getOrders(symbol, DEFAULT_ORDER_LIMIT).stream()
+                .map(OrderResponse::from)
+                .toList();
+    }
 }
+
 

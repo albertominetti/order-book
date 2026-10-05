@@ -22,8 +22,10 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
  *
  * <p>Two streams are exposed:</p>
  * <ul>
- *   <li>{@code GET /api/instruments/{symbol}/stream} pushes {@code book} and {@code trades} events of
- *       one instrument, validated exactly like its order book endpoint;</li>
+ *   <li>{@code GET /api/instruments/{symbol}/stream} pushes {@code book}, {@code orders} and {@code trades} events of
+ *       one instrument. It can be opened for <em>any</em> valid symbol: a symbol whose book does not
+ *       exist yet streams an empty book, so a client never has to poll just to find out that the
+ *       instrument is empty;</li>
  *   <li>{@code GET /api/instruments/stream} pushes {@code instruments} events with the instrument
  *       list shared by every client.</li>
  * </ul>
@@ -46,8 +48,11 @@ public class MarketStreamController {
      * <p>Returns {@code 200} with content type {@code text/event-stream} and keeps the response open.
      * A comment is sent every 20 seconds so idle connections are not closed by a proxy.</p>
      *
-     * @throws IllegalArgumentException                                            when the symbol is missing or malformed (400)
-     * @throws com.albertominetti.orderbook.exception.UnknownInstrumentException when nothing was ever traded on the symbol (404)
+     * <p>Any well formed symbol is accepted, whether or not an order has created its book: the
+     * subscriber then receives an empty book and an empty trade tape, and the real state from the
+     * moment the first order arrives. Only a missing or malformed symbol is rejected.</p>
+     *
+     * @throws IllegalArgumentException when the symbol is missing or malformed (400)
      */
     @GetMapping(path = "/{symbol}/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public SseEmitter streamInstrument(@PathVariable

@@ -3,6 +3,7 @@ package com.albertominetti.orderbook.service;
 import com.albertominetti.orderbook.domain.SymbolRules;
 import com.albertominetti.orderbook.dto.InstrumentStatsResponse;
 import com.albertominetti.orderbook.dto.OrderBookResponse;
+import com.albertominetti.orderbook.dto.OrderResponse;
 import com.albertominetti.orderbook.dto.TradeResponse;
 import org.springframework.http.MediaType;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -29,6 +30,13 @@ import java.util.function.Supplier;
  * the trade tape and {@link InstrumentStatsResponse} for the instrument list. A client therefore
  * reuses one parser for both channels.</p>
  *
+ * <p>The push channel and the query endpoints agree on what an instrument nobody has traded on is:
+ * an empty state, not a missing resource. A stream can be opened for any well formed symbol, even one
+ * that has no book yet, and starts with an empty book, an empty order list and an empty tape, while
+ * {@code GET /api/instruments/{symbol}/orderbook} and {@code .../trades} answer {@code 200} with
+ * that very same empty book and tape. Only a malformed symbol is an error, {@code 400}, on either
+ * channel.</p>
+ *
  * <p>This component is purely additive: it only writes to whoever subscribed, so a broken subscriber
  * can never affect a matching engine or a REST response. Publishing never throws, it only drops the
  * subscribers that cannot be written to.</p>
@@ -54,6 +62,9 @@ public class MarketBroadcaster {
     /** Event carrying the instrument list. */
     public static final String INSTRUMENTS_EVENT = "instruments";
 
+    /** Event carrying all orders of the instrument. */
+    public static final String ORDERS_EVENT = "orders";
+
     private final OrderService orderService;
 
     /** Subscribers of the per-instrument streams, keyed by normalized symbol. */
@@ -70,21 +81,27 @@ public class MarketBroadcaster {
      * Subscribes to the book and the trades of one instrument and immediately pushes its current
      * state, so a fresh subscriber is never blank.
      *
+     * <p>Any valid symbol can be streamed, even one whose book does not exist yet: such a subscriber
+     * is registered like any other and receives an empty book plus an empty trade tape, then the
+     * real state as soon as the first order creates the book. Nothing is created here, so opening a
+     * stream never brings an instrument into existence. Only a malformed symbol is rejected.</p>
+     *
      * @param rawSymbol symbol to normalize (trim + uppercase)
      * @return the emitter to hand back to the client
-     * @throws IllegalArgumentException    when the symbol is missing or malformed (HTTP 400)
-     * @throws com.albertominetti.orderbook.exception.UnknownInstrumentException when the symbol is
-     *                                                                    well formed but has no
-     *                                                                    book yet (HTTP 404)
+     * @throws IllegalArgumentException when the symbol is missing or malformed (HTTP 400)
      */
     public SseEmitter subscribeBook(String rawSymbol) {
         String symbol = SymbolRules.normalize(rawSymbol);
 
-        // The current state is resolved before anything is registered: an unknown instrument throws
-        // here, so the caller answers 404 UNKNOWN_INSTRUMENT instead of opening a stream that would
-        // carry nothing at all and would leave a subscriber behind.
-        OrderBookResponse book = OrderBookResponse.from(orderService.getBookSnapshot(symbol));
-        List<TradeResponse> tape = tradeTape(symbol);
+        // The initial state is resolved before anything is registered, so an emitter that cannot be
+        // written to never leaves a subscriber behind. A symbol without an engine is not a failure:
+        // it is the empty state of an instrument no order has reached yet.
+        boolean known = orderService.hasInstrument(symbol);
+        OrderBookResponse book = known
+                ? OrderBookResponse.from(orderService.getBookSnapshot(symbol))
+                : OrderBookResponse.empty();
+        List<TradeResponse> tape = known ? tradeTape(symbol) : List.of();
+        List<OrderResponse> orders = known ? ordersList(symbol, 50) : List.of();
 
         SseEmitter emitter = newEmitter();
         Set<SseEmitter> subscribers = bookSubscribers.computeIfAbsent(symbol, key -> subscribersOf());
@@ -92,6 +109,10 @@ public class MarketBroadcaster {
         register(subscribers, emitter);
 
         if (!push(emitter, BOOK_EVENT, book)) {
+            remove(subscribers, emitter);
+            return emitter;
+        }
+        if (!push(emitter, ORDERS_EVENT, orders)) {
             remove(subscribers, emitter);
             return emitter;
         }
@@ -135,6 +156,11 @@ public class MarketBroadcaster {
     /** Pushes a trade tape to the subscribers of one instrument. */
     public void publishTrades(String symbol, Object payload) {
         broadcast(bookSubscribersOf(symbol), () -> event(TRADES_EVENT, payload));
+    }
+
+    /** Pushes all orders to the subscribers of one instrument. */
+    public void publishOrders(String symbol, Object payload) {
+        broadcast(bookSubscribersOf(symbol), () -> event(ORDERS_EVENT, payload));
     }
 
     /** Pushes the instrument list to the subscribers of the market stream. */
@@ -249,6 +275,13 @@ public class MarketBroadcaster {
     private List<TradeResponse> tradeTape(String symbol) {
         return orderService.getRecentTrades(symbol, STREAM_TRADE_LIMIT).stream()
                 .map(TradeResponse::from)
+                .toList();
+    }
+
+    /** All orders of one instrument, newest first. */
+    private List<OrderResponse> ordersList(String symbol, int limit) {
+        return orderService.getOrders(symbol, limit).stream()
+                .map(OrderResponse::from)
                 .toList();
     }
 

@@ -10,6 +10,10 @@ export class ApiError extends Error {
     this.status = details.status || 0
     this.path = details.path || ''
     this.violations = Array.isArray(details.violations) ? details.violations : []
+    // RFC 7807 problem details: the type URI, the title and the X-Flow-ID correlation id.
+    this.type = details.type || ''
+    this.title = details.title || ''
+    this.flowId = details.flowId || ''
   }
 }
 
@@ -67,13 +71,18 @@ async function request(path, options = {}) {
   const payload = await readJson(response)
 
   if (!response.ok) {
+    // RFC 7807: the human readable text is in `detail` (falling back to `title`), the request URI in
+    // `instance`; `code`, `violations` and `flowId` come from the extension members.
     throw new ApiError(
-      (payload && payload.message) || 'Request failed with HTTP ' + response.status,
+      (payload && (payload.detail || payload.title)) || 'Request failed with HTTP ' + response.status,
       {
         code: (payload && payload.code) || 'HTTP_' + response.status,
         status: response.status,
-        path: (payload && payload.path) || API_BASE + path,
-        violations: (payload && payload.violations) || []
+        path: (payload && payload.instance) || API_BASE + path,
+        violations: (payload && payload.violations) || [],
+        type: (payload && payload.type) || '',
+        title: (payload && payload.title) || '',
+        flowId: (payload && payload.flowId) || response.headers.get('X-Flow-ID') || ''
       }
     )
   }
@@ -102,6 +111,11 @@ export function searchInstruments(query, limit = DEFAULT_SEARCH_LIMIT, options =
 
 export function getOrderBook(symbol) {
   return request('/instruments/' + encodeURIComponent(symbol) + '/orderbook')
+}
+
+export function getOrders(symbol, limit = 50) {
+  const safeLimit = Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : 50
+  return request('/instruments/' + encodeURIComponent(symbol) + '/orders?limit=' + safeLimit)
 }
 
 export function getRecentTrades(symbol, limit = DEFAULT_TRADE_LIMIT) {
