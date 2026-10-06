@@ -1,6 +1,6 @@
 package com.albertominetti.orderbook.web;
 
-import com.albertominetti.orderbook.service.MarketBroadcaster;
+import com.albertominetti.orderbook.service.MarketStreamBroadcaster;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -47,7 +47,7 @@ class MarketStreamApiTest {
     private MockMvc mockMvc;
 
     @Autowired
-    private MarketBroadcaster broadcaster;
+    private MarketStreamBroadcaster broadcaster;
 
     // ------------------------------------------------------------------ opening a stream
 

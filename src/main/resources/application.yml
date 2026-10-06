@@ -10,6 +10,17 @@ spring:
   mvc:
     # Log only the mapped requests, not the resolved resources
     log-resolved-exception: false
+  kafka:
+    # Empty by default: with no broker the app still runs and no connection is attempted.
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:}
+    properties:
+      # SASL/SCRAM over TLS, for example for Redpanda Cloud. Plaintext, unauthenticated when unset.
+      security.protocol: ${KAFKA_SECURITY_PROTOCOL:PLAINTEXT}
+      sasl.mechanism: ${KAFKA_SASL_MECHANISM:}
+      sasl.jaas.config: ${KAFKA_SASL_JAAS_CONFIG:}
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
 
 server:
   # Reads the port provided by the platform (Render sets PORT), falling back to 8080 locally.
@@ -27,3 +38,11 @@ springdoc:
     path: /swagger-ui.html
     operations-sorter: alpha
     tags-sorter: alpha
+
+# Market events: optional Kafka publication of order/trade events.
+# Disabled by default; with no broker configured the app publishes nothing and never connects.
+orderbook:
+  events:
+    kafka:
+      enabled: ${KAFKA_EVENTS_ENABLED:false}
+      topic: ${KAFKA_EVENTS_TOPIC:order-events}

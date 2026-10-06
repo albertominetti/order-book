@@ -1,7 +1,7 @@
 package com.albertominetti.orderbook.web;
 
 import com.albertominetti.orderbook.domain.SymbolRules;
-import com.albertominetti.orderbook.service.MarketBroadcaster;
+import com.albertominetti.orderbook.service.MarketStreamBroadcaster;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Pattern;
 import org.springframework.http.MediaType;
@@ -35,9 +35,9 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 @Validated
 public class MarketStreamController {
 
-    private final MarketBroadcaster broadcaster;
+    private final MarketStreamBroadcaster broadcaster;
 
-    public MarketStreamController(MarketBroadcaster broadcaster) {
+    public MarketStreamController(MarketStreamBroadcaster broadcaster) {
         this.broadcaster = broadcaster;
     }
 

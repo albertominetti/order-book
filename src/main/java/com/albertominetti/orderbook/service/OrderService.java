@@ -8,6 +8,7 @@ import com.albertominetti.orderbook.domain.Trade;
 import com.albertominetti.orderbook.dto.CreateOrderRequest;
 import com.albertominetti.orderbook.engine.MatchResult;
 import com.albertominetti.orderbook.engine.MatchingEngine;
+import com.albertominetti.orderbook.events.MarketEventEmitter;
 import com.albertominetti.orderbook.exception.InvalidOrderException;
 import com.albertominetti.orderbook.exception.OrderNotFoundException;
 import org.springframework.stereotype.Service;
@@ -33,11 +34,15 @@ public class OrderService {
 
     private final MarketRegistry registry;
 
+    /** Optional market event publication; a no-op publisher when no broker is configured. */
+    private final MarketEventEmitter events;
+
     /** Global index: every accepted order id mapped to the instrument that owns it. */
     private final ConcurrentHashMap<UUID, String> symbolByOrderId = new ConcurrentHashMap<>();
 
-    public OrderService(MarketRegistry registry) {
+    public OrderService(MarketRegistry registry, MarketEventEmitter events) {
         this.registry = registry;
+        this.events = events;
     }
 
     /**
@@ -53,6 +58,10 @@ public class OrderService {
 
         MatchResult result = engine.submit(request.side(), request.type(), request.price(), request.quantity());
         symbolByOrderId.put(result.order().id(), symbol);
+        events.orderAccepted(result.order());
+        for (Trade trade : result.trades()) {
+            events.tradeExecuted(trade);
+        }
         return result;
     }
 
@@ -63,7 +72,9 @@ public class OrderService {
 
     /** Cancels an order that is still resting on the book of its own instrument. */
     public OrderView cancelOrder(UUID orderId) {
-        return engineOf(orderId).cancel(orderId);
+        OrderView cancelled = engineOf(orderId).cancel(orderId);
+        events.orderCancelled(cancelled);
+        return cancelled;
     }
 
     /**

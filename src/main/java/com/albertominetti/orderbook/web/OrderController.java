@@ -14,7 +14,7 @@ import com.albertominetti.orderbook.exception.OrderNotFoundException;
 import com.albertominetti.orderbook.exception.OrderStateException;
 import com.albertominetti.orderbook.exception.UnknownInstrumentException;
 import com.albertominetti.orderbook.service.InstrumentCatalog;
-import com.albertominetti.orderbook.service.MarketBroadcaster;
+import com.albertominetti.orderbook.service.MarketStreamBroadcaster;
 import com.albertominetti.orderbook.service.OrderService;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Max;
@@ -69,10 +69,10 @@ public class OrderController {
 
     private final OrderService orderService;
     private final InstrumentCatalog instrumentCatalog;
-    private final MarketBroadcaster broadcaster;
+    private final MarketStreamBroadcaster broadcaster;
 
     public OrderController(OrderService orderService, InstrumentCatalog instrumentCatalog,
-                           MarketBroadcaster broadcaster) {
+                           MarketStreamBroadcaster broadcaster) {
         this.orderService = orderService;
         this.instrumentCatalog = instrumentCatalog;
         this.broadcaster = broadcaster;

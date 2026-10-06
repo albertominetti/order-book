@@ -36,6 +36,8 @@ Useful paths on both: `/api/instruments`, and the API documentation at `/swagger
 - Recent trades tape per instrument.
 - Server-Sent Events streams per instrument and for the instrument list, openable for **any** valid
   symbol because an empty book is streamed until the first order.
+- Optional publication of the order and trade events to Kafka, off by default, see
+  [Market events](#market-events-kafka-optional).
 - Symbol normalization (trim + upper-case) and shape validation.
 - Validation and consistent error responses (`201`, `200`, `400`, `404`, `405`, `422`).
 - Thread-safe: every engine has its own lock, so instruments never block each other.
@@ -44,7 +46,7 @@ Useful paths on both: `/api/instruments`, and the API documentation at `/swagger
 ## Tech stack
 
 - Java 25
-- Spring Boot 4.1.1 (Web, Validation)
+- Spring Boot 4.1.1 (Web, Validation, Kafka, optional)
 - springdoc-openapi 3.x (OpenAPI 3 + Swagger UI)
 - Vue 3 + Vite (single page frontend under `frontend/`)
 - Maven
@@ -175,8 +177,16 @@ src/main/java/com/albertominetti/orderbook
 │   ├── MarketRegistry            one engine per symbol, created lazily
 │   ├── InstrumentCatalog         instrument catalogue loaded from instruments.tsv, searched by symbol or name
 │   ├── OrderService              application facade, routes every request by symbol
-│   ├── MarketBroadcaster         fan-out of the book, trade tape and instrument list to the SSE subscribers
+│   ├── MarketStreamBroadcaster    stream channel to the UI: fan-out of the book, trade tape and instrument list to the SSE subscribers
 │   └── EngineConfiguration       Spring wiring of the Clock
+├── events/                       Optional market event publication (ports and adapters)
+│   ├── MarketEventType           ORDER_ACCEPTED, ORDER_CANCELLED, TRADE_EXECUTED
+│   ├── MarketEvent               flat, immutable event, serialized as one JSON object
+│   ├── MarketEventPublisher      the port the domain publishes through, no Kafka in it
+│   ├── NoOpMarketEventPublisher  default adapter: publication disabled, does nothing
+│   ├── KafkaMarketEventPublisher adapter: JSON + symbol key, asynchronous, never throws
+│   ├── MarketEventConfiguration  picks the adapter: Kafka when enabled, no-op otherwise
+│   └── MarketEventEmitter        builds the events, stamps the per-symbol sequence and the clock
 ├── web/
 │   ├── OrderController           REST endpoints
 │   ├── MarketStreamController    Server-Sent Events endpoints
@@ -226,7 +236,7 @@ frontend/                            Vue 3 + Vite single page application (built
 src/test/java/com/albertominetti/orderbook
 ├── engine/MatchingEngineTest.java
 ├── service/MarketRegistryTest.java
-├── service/MarketBroadcasterTest.java
+├── service/MarketStreamBroadcasterTest.java
 ├── service/InstrumentCatalogTest.java
 ├── web/OrderApiIntegrationTest.java
 ├── web/MarketStreamApiTest.java
@@ -276,8 +286,8 @@ src/test/java/com/albertominetti/orderbook
   recent trades.
 - **Clock injection.** Engines take a `java.time.Clock` (a `Clock.systemUTC()` bean from
   `EngineConfiguration`), which lets tests produce deterministic timestamps.
-- **An instrument nobody has traded on is an empty state, on both channels.** `MarketBroadcaster` fans
-  out to one set of `SseEmitter` per symbol plus one set for the instrument list, and it publishes the
+- **An instrument nobody has traded on is an empty state, on both channels.** `MarketStreamBroadcaster`
+  fans out to one set of `SseEmitter` per symbol plus one set for the instrument list, and it publishes the
   very same response records the REST endpoints return, so both channels carry the same JSON. A stream
   can be opened for any well formed symbol: `subscribeBook` registers the subscriber even when no order
   has created the engine yet and pushes an empty book, an empty order list and an empty trade tape, so
@@ -287,6 +297,14 @@ src/test/java/com/albertominetti/orderbook
   malformed symbol is an error, `400`, on either channel. Publishing is purely additive and never
   throws: a subscriber that cannot be written to is dropped and completes, and cannot slow a matching
   engine down.
+- **A port and its adapters, chosen at startup.** The domain publishes market events through the
+  `MarketEventPublisher` interface, which contains no broker technology. `MarketEventConfiguration`
+  creates the Kafka adapter only when `orderbook.events.kafka.enabled` is `true` and the no-op one
+  otherwise; the conditions are mutually exclusive, so exactly one bean exists and, with events
+  disabled, nothing is ever sent and no connection is attempted. Every event is keyed by its symbol,
+  which keeps the events of one instrument on one partition and therefore in order, and is stamped
+  with a per-symbol sequence number so a consumer can detect a gap. Sending is asynchronous and never
+  throws, exactly like the SSE fan-out: an event stream is an addition, not a dependency.
 
 ## How the matching works
 
@@ -311,9 +329,11 @@ terminal and can never change, so they are also the statuses that make a cancel 
 
 Configuration lives in `src/main/resources/application.yml` (YAML), not in a `.properties` file. It
 sets the application name, the HTTP port (`${PORT:8080}`, so it reads the port provided by the
-platform and falls back to `8080` locally), the Jackson defaults, the springdoc paths and the
-log levels. Jackson is configured with `default-property-inclusion: non_null`, so optional fields such
-as `price` on a MARKET order, or `bestAsk` on a one-sided book, are simply omitted from the JSON.
+platform and falls back to `8080` locally), the Jackson defaults, the Kafka producer (empty
+bootstrap servers by default), the optional `orderbook.events.kafka.*` switches, the springdoc paths
+and the log levels. Jackson is configured with `default-property-inclusion: non_null`, so optional
+fields such as `price` on a MARKET order, or `bestAsk` on a one-sided book, are simply omitted from
+the JSON.
 
 The build toolchain has its own properties in `pom.xml`: `node.version` and `npm.version`, the Node
 and npm versions `frontend-maven-plugin` installs inside `frontend/`, plus
@@ -677,6 +697,93 @@ existence through `POST /api/orders`, so `GET /api/instruments/{symbol}/orderboo
 `GET /api/instruments/{symbol}/trades` answer the very same empty book and `200` for it, while a
 malformed symbol is still `400 VALIDATION_ERROR` on the stream as well.
 
+This SSE channel is the **stream channel for the UI only**: it pushes full-state snapshots (book,
+orders, trades and the instrument list) to browsers, and only when something actually changes. It is
+ephemeral and keeps no history at all, since a subscriber that reconnects simply receives the current
+state again. The append-only event stream for reporting and backend consumers is a separate channel,
+described in [Market events](#market-events-kafka-optional).
+
+## Market events (Kafka, optional)
+
+The service can publish what happens on the market to a Kafka topic. It is **off by default**: with
+no broker configured the application publishes nothing and does not even try to connect, so the
+REST API and the SSE streams behave exactly as before.
+
+Two distinct outbound channels leave the matching engine, and both are often called "events":
+
+| Channel                                                                                            | What it is                                                                                        |
+|----------------------------------------------------------------------------------------------------------------------------------------------------------------------|--------------------------------------------------------------------------------------------------|
+| **SSE** (`MarketStreamBroadcaster`, `/api/instruments/{symbol}/stream`, `/api/instruments/stream`) | Stream channel for the **browser**: full-state snapshots pushed on change, ephemeral, no history |
+| **Kafka events** (`events` package, topic `order-events`)                                   | Event stream for **backend systems**: append-only facts, keyed by symbol, replayable       |
+
+The SSE channel is a transient stream of the current state for the browser, while the Kafka channel
+is a durable, ordered and replayable log of what happened, keyed by symbol and consumed by backend
+systems, **not** by the browser. The two are **independent**: the SSE channel is unchanged, and the
+Kafka stream is purely additive on top of it.
+
+Three events are emitted:
+
+| Type             | Emitted when                                             | Carries                                                                    |
+|------------------|----------------------------------------------------------|-----------------------------------------------------------------------------|
+| `ORDER_ACCEPTED` | an order has been accepted by an engine                  | order id, side, type, price, original quantity, remaining quantity, status  |
+| `ORDER_CANCELLED`| a resting order has been cancelled                       | the same order fields, with the `CANCELLED` status                          |
+| `TRADE_EXECUTED` | a match happened while submitting an order               | trade id, buy order id, sell order id, execution price, executed quantity    |
+
+The events go to a **single topic**, `order-events` by default, and the **message key is the
+symbol**, so every event of one instrument lands on the same partition and reaches the consumer in
+the order it was produced (per-instrument ordering, at the price of one partition per instrument).
+The value is the JSON serialization of one flat `MarketEvent`:
+
+```json
+{
+  "seq": 7,
+  "occurredAt": "2026-10-05T09:00:00Z",
+  "symbol": "BTC-USD",
+  "type": "TRADE_EXECUTED",
+  "price": 100.00,
+  "quantity": 2,
+  "tradeId": "8a2b3c4d-5e6f-4a1b-8c9d-0e1f2a3b4c5d",
+  "buyOrderId": "1a2b3c4d-5e6f-4a1b-8c9d-0e1f2a3b4c5d",
+  "sellOrderId": "2b3c4d5e-6f7a-4b1c-9d0e-1f2a3b4c5d6e"
+}
+```
+
+`seq` is a **per-symbol monotonic counter** starting at 1, so a consumer of one instrument can
+detect a gap on its own stream. The fields that do not apply to an event are `null` and are omitted
+from the JSON (like everywhere else in this service, `default-property-inclusion: non_null`): an
+`ORDER_ACCEPTED` carries no `tradeId`, a `TRADE_EXECUTED` no `orderId` or `status`, and a MARKET
+order no `price`.
+
+Three environment variables drive it:
+
+| Variable                  | Default         | Meaning                                              |
+|---------------------------|-----------------|------------------------------------------------------|
+| `KAFKA_EVENTS_ENABLED`    | `false`         | `true` switches the Kafka adapter on                 |
+| `KAFKA_BOOTSTRAP_SERVERS` | *(empty)*       | `host:port` list of brokers, for example `localhost:9092` |
+| `KAFKA_EVENTS_TOPIC`      | `order-events`  | topic the events are published to                    |
+| `KAFKA_SECURITY_PROTOCOL` | `PLAINTEXT` | `SASL_SSL` for a broker that authenticates (e.g. Redpanda Cloud) |
+| `KAFKA_SASL_MECHANISM`    | *(empty)*   | `SCRAM-SHA-256` with `SASL_SSL` |
+| `KAFKA_SASL_JAAS_CONFIG`  | *(empty)*   | the JAAS login config, e.g. `org.apache.kafka.common.security.scram.ScramLoginModule required username="..." password="...";` |
+
+For a broker that requires SASL (for example Redpanda Cloud, which needs `SASL_SSL` with
+`SCRAM-SHA-256`), set these three variables; the username and password belong in `KAFKA_SASL_JAAS_CONFIG`
+and should be supplied as secrets, never committed to the repository.
+
+```bash
+KAFKA_EVENTS_ENABLED=true KAFKA_BOOTSTRAP_SERVERS=localhost:9092 mvn spring-boot:run
+```
+
+Sending is asynchronous and best effort: a serialization error or a broker failure is logged as a
+warning and never fails a request nor slows a matching engine down. The service stays a pure
+in-memory matching engine: nothing is stored, and losing the topic loses only the event stream.
+
+The layer is a **port and adapters**: `OrderService` builds events through `MarketEventEmitter` and
+hands them to the `MarketEventPublisher` interface, which knows nothing about Kafka. The bean behind
+that interface is chosen at startup by `MarketEventConfiguration`: the `KafkaMarketEventPublisher`
+only when the property above is `true`, otherwise the `NoOpMarketEventPublisher`. Exactly one of the
+two exists at any time, so with events disabled the Kafka publisher is never built and the
+application never opens a connection.
+
 ## Symbol rules
 
 A symbol identifies a tradable instrument and is required everywhere.
@@ -798,7 +905,7 @@ routing:
   unknown instrument, malformed symbols rejected without creating an instrument, sixteen threads
   racing on the first order of a new symbol, and the isolation guarantee that two symbols never match
   even at the same price while the same symbol does.
-- `MarketBroadcasterTest`: what a subscriber receives on subscription (the current book and tape, an
+- `MarketStreamBroadcasterTest`: what a subscriber receives on subscription (the current book and tape, an
   empty book and an empty tape for a symbol without one, the real state after its first order), that a
   publish reaches the subscribers of one symbol only, the keep-alive comment, and that completion,
   timeout, error or a broken write all unregister a subscriber without affecting the others.
@@ -823,6 +930,14 @@ routing:
   `/app/`, to Swagger UI and to the OpenAPI JSON.
 - `SpaRoutingTest`: `/app` and `/app/` forward to `/app/index.html`, and the entry document built by
   Maven from `frontend/` is really served, so the bundle is packaged.
+- `MarketEventEmitterTest`: the events the emitter builds on a frozen clock, their fields per type,
+  and the sequence number restarting on every symbol.
+- `MarketEventConfigurationTest`: the no-op publisher is the single bean by default, and the Kafka
+  one replaces it when `orderbook.events.kafka.enabled=true`. The `KafkaTemplate` is a mock, so no
+  broker is needed.
+- `OrderEventIntegrationTest`: end to end through the real context with a recording publisher: a
+  submission publishes `ORDER_ACCEPTED` and its `TRADE_EXECUTED` events, a cancellation publishes
+  `ORDER_CANCELLED`, and a rejected submit publishes nothing.
 
 The frontend build runs in the `generate-resources` phase, therefore every `mvn test` also runs
 `npm install` and `vite build` before the Java tests.

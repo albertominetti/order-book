@@ -6,6 +6,8 @@ import com.albertominetti.orderbook.domain.Side;
 import com.albertominetti.orderbook.dto.CreateOrderRequest;
 import com.albertominetti.orderbook.dto.OrderBookResponse;
 import com.albertominetti.orderbook.dto.OrderResponse;
+import com.albertominetti.orderbook.events.MarketEventEmitter;
+import com.albertominetti.orderbook.events.NoOpMarketEventPublisher;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -31,7 +33,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * <p>Subscribers are {@link RecordingEmitter}s handed out by a {@link CapturingBroadcaster}, so the
  * events are inspected directly instead of going through a servlet container.</p>
  */
-class MarketBroadcasterTest {
+class MarketStreamBroadcasterTest {
 
     private static final String SYMBOL = "BTC-USD";
 
@@ -40,7 +42,10 @@ class MarketBroadcasterTest {
 
     @BeforeEach
     void setUp() {
-        orderService = new OrderService(new MarketRegistry(Clock.systemUTC()));
+        Clock clock = Clock.systemUTC();
+        // Events are not the subject of this test: published into a no-op publisher.
+        MarketEventEmitter events = new MarketEventEmitter(new NoOpMarketEventPublisher(), clock);
+        orderService = new OrderService(new MarketRegistry(clock), events);
         broadcaster = new CapturingBroadcaster(orderService);
         submit(SYMBOL, "BUY", "100.00", "2");
     }
@@ -257,7 +262,7 @@ class MarketBroadcasterTest {
     }
 
     /** A broadcaster whose emitters record what is written to them instead of writing it out. */
-    private static final class CapturingBroadcaster extends MarketBroadcaster {
+    private static final class CapturingBroadcaster extends MarketStreamBroadcaster {
 
         private final List<RecordingEmitter> created = new CopyOnWriteArrayList<>();
         private boolean alwaysFail;

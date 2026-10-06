@@ -17,8 +17,13 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Supplier;
 
 /**
- * Fan-out of market updates to the Server-Sent Events subscribers, the push counterpart of the
- * polling REST endpoints.
+ * Fan-out of market updates over the Server-Sent Events **stream** channel, the one the browser UI
+ * subscribes to, and the push counterpart of the polling REST endpoints.
+ *
+ * <p>Everything pushed here is a full-state snapshot: the current book, the current order list, the
+ * current trade tape and the current instrument list. Nothing is a delta and nothing is a fact that
+ * has just happened, because a snapshot is all a UI needs to render itself and a subscriber that
+ * (re)connects gets the whole picture again.</p>
  *
  * <p>There is one set of subscribers per instrument symbol plus a single set for the "market" stream
  * that carries the instrument list. Subscribers are {@link SseEmitter} instances registered on
@@ -40,30 +45,36 @@ import java.util.function.Supplier;
  * <p>This component is purely additive: it only writes to whoever subscribed, so a broken subscriber
  * can never affect a matching engine or a REST response. Publishing never throws, it only drops the
  * subscribers that cannot be written to.</p>
+ *
+ * <p>This is the stream channel: ephemeral full-state snapshots for browsers, kept open per
+ * subscriber and never replayed. It is not the event stream: the append-only event stream for
+ * reporting consumers and backend systems lives in its own package,
+ * {@link com.albertominetti.orderbook.events}, and carries what happened instead of the current
+ * state. The two channels are independent.</p>
  */
 @Component
-public class MarketBroadcaster {
+public class MarketStreamBroadcaster {
 
     /** How long a stream stays open before the container times it out: 30 minutes. */
     public static final long STREAM_TIMEOUT_MS = 30L * 60L * 1000L;
 
-    /** Number of trades carried by a {@code trades} event, the size of the streamed trade tape. */
+    /** Number of trades carried by a {@code trades} update, the size of the streamed trade tape. */
     public static final int STREAM_TRADE_LIMIT = 20;
 
     /** Interval between two keep-alive comments. */
     static final long HEARTBEAT_MS = 20_000L;
 
-    /** Event carrying the book snapshot. */
-    public static final String BOOK_EVENT = "book";
+    /** Update carrying the book snapshot. */
+    public static final String BOOK_UPDATE = "book";
 
-    /** Event carrying the recent trade tape. */
-    public static final String TRADES_EVENT = "trades";
+    /** Update carrying the recent trade tape. */
+    public static final String TRADES_UPDATE = "trades";
 
-    /** Event carrying the instrument list. */
-    public static final String INSTRUMENTS_EVENT = "instruments";
+    /** Update carrying the instrument list. */
+    public static final String INSTRUMENTS_UPDATE = "instruments";
 
-    /** Event carrying all orders of the instrument. */
-    public static final String ORDERS_EVENT = "orders";
+    /** Update carrying all orders of the instrument. */
+    public static final String ORDERS_UPDATE = "orders";
 
     private final OrderService orderService;
 
@@ -73,7 +84,7 @@ public class MarketBroadcaster {
     /** Subscribers of the market stream, the instrument list. */
     private final Set<SseEmitter> instrumentSubscribers = ConcurrentHashMap.newKeySet();
 
-    public MarketBroadcaster(OrderService orderService) {
+    public MarketStreamBroadcaster(OrderService orderService) {
         this.orderService = orderService;
     }
 
@@ -108,15 +119,15 @@ public class MarketBroadcaster {
 
         register(subscribers, emitter);
 
-        if (!push(emitter, BOOK_EVENT, book)) {
+        if (!push(emitter, BOOK_UPDATE, book)) {
             remove(subscribers, emitter);
             return emitter;
         }
-        if (!push(emitter, ORDERS_EVENT, orders)) {
+        if (!push(emitter, ORDERS_UPDATE, orders)) {
             remove(subscribers, emitter);
             return emitter;
         }
-        if (!push(emitter, TRADES_EVENT, tape)) {
+        if (!push(emitter, TRADES_UPDATE, tape)) {
             remove(subscribers, emitter);
         }
         return emitter;
@@ -132,7 +143,7 @@ public class MarketBroadcaster {
 
         register(instrumentSubscribers, emitter);
 
-        if (!push(emitter, INSTRUMENTS_EVENT, instrumentStats())) {
+        if (!push(emitter, INSTRUMENTS_UPDATE, instrumentStats())) {
             remove(instrumentSubscribers, emitter);
         }
         return emitter;
@@ -150,22 +161,22 @@ public class MarketBroadcaster {
 
     /** Pushes a book snapshot to the subscribers of one instrument. */
     public void publishBook(String symbol, Object payload) {
-        broadcast(bookSubscribersOf(symbol), () -> event(BOOK_EVENT, payload));
+        broadcast(bookSubscribersOf(symbol), () -> event(BOOK_UPDATE, payload));
     }
 
     /** Pushes a trade tape to the subscribers of one instrument. */
     public void publishTrades(String symbol, Object payload) {
-        broadcast(bookSubscribersOf(symbol), () -> event(TRADES_EVENT, payload));
+        broadcast(bookSubscribersOf(symbol), () -> event(TRADES_UPDATE, payload));
     }
 
     /** Pushes all orders to the subscribers of one instrument. */
     public void publishOrders(String symbol, Object payload) {
-        broadcast(bookSubscribersOf(symbol), () -> event(ORDERS_EVENT, payload));
+        broadcast(bookSubscribersOf(symbol), () -> event(ORDERS_UPDATE, payload));
     }
 
     /** Pushes the instrument list to the subscribers of the market stream. */
     public void publishInstruments(Object payload) {
-        broadcast(instrumentSubscribers, () -> event(INSTRUMENTS_EVENT, payload));
+        broadcast(instrumentSubscribers, () -> event(INSTRUMENTS_UPDATE, payload));
     }
 
     /**
@@ -271,7 +282,7 @@ public class MarketBroadcaster {
         return SseEmitter.event().name(name).data(payload, MediaType.APPLICATION_JSON);
     }
 
-    /** The recent trade tape of one instrument, the payload of the {@code trades} event. */
+    /** The recent trade tape of one instrument, the payload of the {@code trades} update. */
     private List<TradeResponse> tradeTape(String symbol) {
         return orderService.getRecentTrades(symbol, STREAM_TRADE_LIMIT).stream()
                 .map(TradeResponse::from)
