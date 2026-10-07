@@ -14,7 +14,9 @@ import tools.jackson.databind.ObjectMapper;
  *
  * <p>Publishing is purely additive and never throws: the send is asynchronous, a failure only logs
  * a warning, and a serialization error is caught too, so a broken broker can neither fail a request
- * nor slow a matching engine down.</p>
+ * nor slow a matching engine down. The failure guard catches {@link Throwable} rather than
+ * {@link Exception} because serialization problems surface as {@code Error}s in some runtimes (for
+ * example GraalVM native image), and they must never turn into a request failure.</p>
  */
 public class KafkaMarketEventPublisher implements MarketEventPublisher {
 
@@ -43,7 +45,7 @@ public class KafkaMarketEventPublisher implements MarketEventPublisher {
                                     event.type(), event.symbol(), failure.getMessage());
                         }
                     });
-        } catch (Exception e) {
+        } catch (Throwable e) {
             log.warn("Failed to serialize {} for {}: {}",
                     event.type(), event.symbol(), e.getMessage());
         }
