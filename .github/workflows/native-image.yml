@@ -29,6 +29,12 @@ jobs:
           cache: maven
 
       - name: Build native executable
+        # Spring AOT/native evaluates @ConditionalOnProperty at BUILD time, so the
+        # Kafka event publisher (orderbook.events.kafka.enabled) must be enabled here,
+        # otherwise the no-op publisher is baked into the native executable and the
+        # runtime env var on Render has no effect.
+        env:
+          KAFKA_EVENTS_ENABLED: 'true'
         run: mvn -B -Pnative -DskipTests native:compile
 
       - name: Copy the executable to the build context
